@@ -49,23 +49,23 @@ Supported operations
 Name | Function
 ---- | --------
 
-EnableSSH | Enables SSH on the device (needs Axis OS 5.60 or higher)
-FactoryDefault | Performs factory default while keeping the IP address
-GetEventInfo | Shows the list of supported events, for use in metadata subscription requests
-GetServerReport | Create and download a serverreport
-GetSomeInfo | Example parameter request, getting several items at once but not the full list
-GetSystemLog | Retrieves the system log
-HardfactoryDefault | Performs hard factory default
-ListAcaps | Lists the installed ACAPs
-ListFeatureFlags | Lists the supported feature flags
-PerformTrace | Make the device perform a network trace
-Reboot | Restarts the device
-RemoveAcap
-RestartAcap
-StartAcap
-StopAcap
-UploadAcap
-Wait | Inserts a delay, usefull when executing a series of functions
+| EnableSSH | Enables SSH on the device (needs Axis OS 5.60 or higher) |
+| FactoryDefault | Performs factory default while keeping the IP address |
+| GetEventInfo | Shows the list of supported events, for use in metadata subscription requests |
+| GetServerReport | Create and download a serverreport |
+| GetSomeInfo | Example parameter request, getting several items at once but not the full list |
+| GetSystemLog | Retrieves the system log |
+| HardfactoryDefault | Performs hard factory default |
+| ListAcaps | Lists the installed ACAPs |
+| ListFeatureFlags | Lists the supported feature flags |
+| PerformTrace | Make the device perform a network trace |
+| Reboot | Restarts the device |
+| RemoveAcap | |
+| RestartAcap | |
+| StartAcap | |
+| StopAcap | |
+| UploadAcap | |
+| Wait | Inserts a delay, usefull when executing a series of functions |
 
 
 License
