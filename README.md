@@ -46,9 +46,8 @@ Supported operations
 --------------------
 
 
-Name | Function
----- | --------
-
+| Name | Function |
+| ---- | -------- |
 | EnableSSH | Enables SSH on the device (needs Axis OS 5.60 or higher) |
 | FactoryDefault | Performs factory default while keeping the IP address |
 | GetEventInfo | Shows the list of supported events, for use in metadata subscription requests |
