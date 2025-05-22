@@ -1,7 +1,7 @@
 axis_device_tool
 ----------------
-Python script to perform operations on Axis devices. It should run on a
-standard Python install. Some examples:
+Python script to perform operations on Axis devices.
+Requires Python 3.8+. Some examples:
 
 1. Get supported events from a device, specifying credentials and IP address:
 
