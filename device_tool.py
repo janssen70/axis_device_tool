@@ -289,6 +289,185 @@ class WebAccess:
 
 # -------------------------------------------------------------------------------
 #
+#   Events and Actions support functions                                    {{{1
+#
+# -------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+# Schedules                                                                 {{{2
+#-------------------------------------------------------------------------------
+
+AddSchedule = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <AddScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <NewScheduledEvent>
+    <Name>{0}</Name>
+    <Schedule>
+     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{1}</ICalendar>
+    </Schedule>
+   </NewScheduledEvent>
+  </AddScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+RemoveSchedule = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <RemoveScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <EventID>{0}</EventID>
+  </RemoveScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+ListSchedules = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body>
+   <GetScheduledEvents xmlns="http://www.axis.com/vapix/ws/event1"/>
+ </Body>
+</Envelope>
+"""
+
+#-------------------------------------------------------------------------------
+# ActionConfiguration and -Rules                                            {{{2
+#-------------------------------------------------------------------------------
+
+GenericActionEnvelope = """<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+	<soap:Body>
+		<act:{0} xmlns="http://www.axis.com/vapix/ws/action1">
+		</act:{0}>
+	</soap:Body>
+</soap:Envelope>
+"""
+GenericActionRule = """<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" >
+  <SOAP-ENV:Header/>
+  <SOAP-ENV:Body xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:aev="http://www.axis.com/vapix/ws/event1" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:tns1="http://www.onvif.org/ver10/topics" xmlns:tnsaxis="http://www.axis.com/2009/event/topics">
+      <act:AddActionRule>
+        <act:NewActionRule>
+          <act:Name>{0}</act:Name>
+             {1}
+          <act:Enabled>true</act:Enabled>
+          <act:Conditions>
+             {2}
+          </act:Conditions>
+          <act:PrimaryAction>{3}</act:PrimaryAction>
+        </act:NewActionRule>
+      </act:AddActionRule>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>
+"""
+
+GenericCondition = """<act:Condition>
+   <wsnt:TopicExpression Dialect="http://docs.oasis-open.org/wsn/t-1/TopicExpression/Concrete">{0}</wsnt:TopicExpression>
+   <wsnt:MessageContent Dialect="http://www.onvif.org/ver10/tev/messageContentFilter/ItemFilter">{1}</wsnt:MessageContent>
+</act:Condition>
+"""
+
+GenericStartEvent = """<act:StartEvent>
+  <wsnt:TopicExpression Dialect="http://docs.oasis-open.org/wsn/t-1/TopicExpression/Concrete" xmlns="http://docs.oasis-open.org/wsn/b-2">{0}</wsnt:TopicExpression>
+  <wsnt:MessageContent Dialect="http://www.onvif.org/ver10/tev/messageContentFilter/ItemFilter" xmlns="http://docs.oasis-open.org/wsn/b-2">{1}</wsnt:MessageContent>
+</act:StartEvent>
+"""
+
+
+ActionDefinitions = {
+  'com.axis.action.fixed.notification.http': {
+     'recipient_token': 'com.axis.recipient.http',
+     'params': {'parameters': '', 'message': ''}
+  },
+  'com.axis.action.fixed.play.audioclip': {
+     'recipient_token': None,
+     'params': {
+        'location': '', 
+        'audiooutput': '',
+        'audiodeviceid': '0',
+        'audiooutputid': '0',
+        'repeat': '0',
+        'volume': '100'
+     }
+  }
+}
+
+GenericActionConfiguration = """<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope">
+   <SOAP-ENV:Header/>
+   <SOAP-ENV:Body xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:aev="http://www.axis.com/vapix/ws/event1" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:tns1="http://www.onvif.org/ver10/topics" xmlns:tnsaxis="http://www.axis.com/2009/event/topics">
+     <act:AddActionConfiguration>
+      <act:NewActionConfiguration>
+        <act:Name>{}</act:Name>
+        <act:TemplateToken>{}</act:TemplateToken>
+        <act:Parameters>
+         {}
+        </act:Parameters>
+      </act:NewActionConfiguration>
+     </act:AddActionConfiguration>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>
+"""
+
+GenericRemoveEnvelope = """<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+	<soap:Body>
+		<act:{0} xmlns="http://www.axis.com/vapix/ws/action1">
+          <act:{1}>{2}</act:{1}>
+		</act:{0}>
+	</soap:Body>
+</soap:Envelope>
+"""
+
+GET_ACTION_RULES = GenericActionEnvelope.format('GetActionRules')
+GET_ACTION_CONFIGURATIONS = GenericActionEnvelope.format('GetActionConfigurations')
+REMOVE_ACTION_CONFIGURATION = GenericRemoveEnvelope.format('RemoveActionConfiguration', 'ConfigurationID', '{}')
+REMOVE_ACTION_RULE = GenericRemoveEnvelope.format('RemoveActionRule', 'RuleID', '{}')
+
+class Condition:
+   def __init__(self, topic, content_filter):
+      self.topic = topic
+      self.content_filter = content_filter
+
+   def serialize(self):
+      return GenericCondition.format(self.topic, self.content_filter)
+
+class ConditionList:
+   def __init__(self):
+      self.conditions = []
+
+   def add(self, topic, content_filter):
+      self.conditions.append(Condition(topic, content_filter))
+
+   def serialize(self):
+      return '\n'.join([c.serialize() for c in self.conditions])
+
+def MakeActionConfiguration(token, name, **kwargs):
+   """
+   Generate an action configuration 'in place', use recipient parameters as
+   present in 'kwargs'
+
+   The action configuration parameter content is a merge of the recipient
+   template parameters and the action template
+   """
+   if token in ActionDefinitions:
+      recipient_token = ActionDefinitions[token]['recipient_token']
+      params = []
+      for key, default_val in ActionDefinitions[token]['params'].items():
+         params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key,  default_val)))
+      if recipient_token is not None:
+         if recipient_token not in RecipientDefinitions:
+            return None
+         for key, default_val in RecipientDefinitions[recipient_token].items():
+            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
+      return GenericActionConfiguration.format(name, token, '\n'.join(params))
+   print(f'Error: no action-template for {token}')
+   return None
+
+# -------------------------------------------------------------------------------
+#
 #   VAPIX Client                                                            {{{1
 #
 # -------------------------------------------------------------------------------
@@ -313,7 +492,6 @@ LIST_FEATUREFLAGS = """
   "method": "listAll"
 }
 """
-
 
 class VapixClient:
    """
@@ -354,19 +532,25 @@ class VapixClient:
          print(f'\nReply:\n========\n{plain_data}\n')
          sys.stdout.flush()
 
+   def _dump_xml(self, title: str, xml : ET.Element):
+      if self.debug:
+         print(f'\n{title}:\n========\n')
+         xml_indent(xml)
+         ET.dump(xml)
+         sys.stdout.flush()
+
+   def _dump_xml_request(self, xml : ET.Element):
+      self._dump_xml('Request', xml)
+
+   def _dump_xml_reply(self, xml : ET.Element):
+      self._dump_xml('Reply', xml)
+
    def _dump_txt_request_as_xml(self, req):
       if self.debug:
          print('\nRequest:\n========\n')
          x = ET.fromstring(req)
          xml_indent(x)
          ET.dump(x)
-         sys.stdout.flush()
-
-   def _dump_xml_reply(self, xml):
-      if self.debug:
-         print('\nReply:\n====\n')
-         xml_indent(xml)
-         ET.dump(xml)
          sys.stdout.flush()
 
    def _simple_vapix_call(self,
@@ -641,10 +825,8 @@ class VapixClient:
 
       def show_event(subcategory, event, tf_base):
          event_name = nice_name(event)
-         event_title = f'{subcategory}{
-             " - " if len(subcategory) else ""}{event_name}'
-         result.append(f' {event_title:<40}\teventtopic={
-                       tf_base}/{self.denamespacer.tag(event.tag)}')
+         event_title = f'{subcategory}{ " - " if len(subcategory) else ""}{event_name}'
+         result.append(f' {event_title:<40}\teventtopic={tf_base}/{self.denamespacer.tag(event.tag)}')
 
       request_body = '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body xmlns:xsd="http://www.w3.org/2001/XMLSchema"> <GetEventInstances xmlns="http://www.axis.com/vapix/ws/event1"/></s:Body></s:Envelope>'
       envelope = self._simple_vapix_webservice_call(request_body)
@@ -680,12 +862,167 @@ class VapixClient:
          LIST_FEATUREFLAGS
       ))
 
+   # ----------------------------------------------------------------------------
+   # Event & Action API                                                      {{{2 
+   # ----------------------------------------------------------------------------
+
+   # ----------------------------------------------------------------------------
+   # Schedules                                                               {{{3 
+   # ----------------------------------------------------------------------------
+
+   def ListSchedules(self):
+      """
+      List the configured schedules (Recurrences)
+      """
+      return self._simple_vapix_webservice_call(ListSchedules)
+
+   def AddSchedule(self, name = 'TEST', ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+      """
+      """
+      req = AddSchedule.format(name, ical_spec)
+      envelope = self._simple_vapix_webservice_call(req)
+      config = envelope.find('SOAP-ENV:Body/aev:AddScheduledEventResponse/aev:EventID', MINIMAL_VAPIX_NAMESPACES)
+      if config is not None:
+         return config.text
+      return 'Failed'
+
+   def RemoveSchedule(self, event_id = '0'):
+      """
+      """
+      req = RemoveSchedule.format(f'com.axis.schedules.genid.id-{event_id}')
+      envelope = self._simple_vapix_webservice_call(req)
+      success = envelope.find('SOAP-ENV:Body/aev:RemoveScheduledEventResponse', MINIMAL_VAPIX_NAMESPACES)
+      return 'Failure' if success is None else 'Success'
+
+   # ----------------------------------------------------------------------------
+   # ActionConfigurations                                                    {{{3 
+   # ----------------------------------------------------------------------------
+
+   def GetActionConfigurations(self):
+      """
+      Call: GetActionConfigurations
+
+      (use -r)
+      """
+      return self._simple_vapix_webservice_call( GET_ACTION_CONFIGURATIONS )
+
+   def RemoveActionConfiguration(self, action_id):
+      """
+      Call: RemoveActionConfiguration(action_id=integer)
+
+      Remove an action configuration (make sure to remove the related
+      ActionRule yourself)
+      """
+      return self._simple_vapix_webservice_call(REMOVE_ACTION_CONFIGURATION.format(action_id))
+
+   def RemoveActionConfigurations(self):
+      """
+      Call: RemoveActionConfigurations
+
+      Query the action configurations present on the device, and remove them
+      one by one (make sure to remove the related ActionRules yourself)
+      """
+      envelope = self.GetActionConfigurations()
+      ac_set = envelope.find('SOAP-ENV:Body/act:GetActionConfigurationsResponse/act:ActionConfigurations', MINIMAL_VAPIX_NAMESPACES)
+      for ac in list(ac_set):
+         ac_id = ac.find('act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
+         if ac_id is not None:
+            envelope = self.RemoveActionConfiguration(ac_id.text)
+
+   # ----------------------------------------------------------------------------
+   # ActionRules                                                             {{{3 
+   # ----------------------------------------------------------------------------
+
+   def GetActionRules(self):
+      """
+      Call: GetActionRules
+
+      (use -r)
+      """
+      return self._simple_vapix_webservice_call(GET_ACTION_RULES)
+
+   def RemoveActionRule(self, rule_id):
+      """
+      Call: RemoveActionRule(rule_id=integer)
+
+      Remove an action rule. Does not remove the related action configuration!
+      For that use RemoveActionRuleComplete() instead
+      """
+      self._simple_vapix_webservice_call(REMOVE_ACTION_RULE.format(rule_id))
+
+   def RemoveActionRules(self):
+      """
+      Call: RemoveActionRules
+
+      Query all action rules present on the device, and removed them one by
+      one (does not remove related action configurations, make sure to call
+      RemoveActionConfigurations() yourself)
+      """
+      envelope = self.GetActionRules()
+      rule_set = envelope.find('SOAP-ENV:Body/act:GetActionRulesResponse/act:ActionRules', MINIMAL_VAPIX_NAMESPACES)
+      for rule in list(rule_set):
+         r_id = rule.find('act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if r_id is not None:
+            self.RemoveActionRule(r_id.text)
+
+   def RemoveActionRuleComplete(self, rule_id):
+      """
+      Call: RemoveActionRuleComplete(rule_id=integer)
+
+      Remove an action rule including it's related action configuration. This
+      function leaves the event configuration in a consistent state
+
+      Get the rule_id's using GetActionRules
+      """
+      done = False
+      envelope = self.GetActionRules()
+      rule_set = envelope.find('SOAP-ENV:Body/act:GetActionRulesResponse/act:ActionRules', MINIMAL_VAPIX_NAMESPACES)
+      for rule in list(rule_set):
+         r_id = rule.find('act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if r_id is not None:
+            if r_id.text == rule_id:
+               action_id = rule.find('act:PrimaryAction', MINIMAL_VAPIX_NAMESPACES)
+               self.RemoveActionRule(rule_id)
+               if action_id is not None:
+                  self.RemoveActionConfiguration(action_id.text)
+               done = True
+      return done
+
+   def ActionRuleTest(self):
+      """
+      Configure a Play audio clip when Call button pressed (or input 0
+      toggles) when not Weekends and not After hours
+      """
+      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', 'Play my clip', location = 'camera_clicks16k.au'))
+      config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
+      if config is not None:
+      
+         conditions = ConditionList()
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = 'boolean(//SimpleItem[@Name="id" and @Value="com.axis.schedules.after_hours"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = 'boolean(//SimpleItem[@Name="id" and @Value="com.axis.schedules.weekends"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         req = GenericActionRule.format(
+            'Play an audioclip', 
+            GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
+            conditions.serialize(), 
+            config.text
+         )
+         envelope = self._simple_vapix_webservice_call(req)
+         config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if config is not None:
+            return config.text
+      return None
+
 # -------------------------------------------------------------------------------
 #
 #   Main                                                                    {{{1
 #
 # -------------------------------------------------------------------------------
-
 
 class Executor:
    """
@@ -746,6 +1083,10 @@ class Executor:
                   print(r)
                elif isinstance(r, bytes):
                   print(r.decode('utf-8'))
+               elif isinstance(r, ET.Element):
+                  xml_indent(r)
+                  ET.dump(r)
+                  sys.stdout.flush()
                else:
                   pprint.pprint(r)
             else:
