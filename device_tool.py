@@ -45,6 +45,7 @@ import datetime
 import re
 import json
 import socket
+import ssl
 from typing import Optional, Union, Dict, List
 import xml.etree.ElementTree as ET
 import pprint
@@ -196,6 +197,17 @@ DEBUG_HTTP = 0
 
 # Example proxy: 'http://username:password@proxy.yourdomain:3128'
 
+
+def StandardSSLContext():
+   """
+   Return a SSL context that tells to ignore certificate validity. Maybe not a
+   good idea in general but it does gets us through invalid configurations and
+   perform hard factory defaults
+   """
+   ctx = ssl.create_default_context()
+   ctx.check_hostname = False
+   ctx.verify_mode = ssl.CERT_NONE
+   return ctx
 
 class WebAccess:
    """
@@ -384,12 +396,12 @@ ActionDefinitions = {
   'com.axis.action.fixed.play.audioclip': {
      'recipient_token': None,
      'params': {
-        'location': '', 
-        'audiooutput': '',
-        'audiodeviceid': '0',
-        'audiooutputid': '0',
-        'repeat': '0',
-        'volume': '100'
+        'location': '',
+#        'audiooutput': '',
+#        'audiodeviceid': '0',
+#        'audiooutputid': '0',
+#        'repeat': '0',
+#        'volume': '100'
      }
   }
 }
@@ -457,11 +469,11 @@ def MakeActionConfiguration(token, name, **kwargs):
       params = []
       for key, default_val in ActionDefinitions[token]['params'].items():
          params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key,  default_val)))
-      if recipient_token is not None:
-         if recipient_token not in RecipientDefinitions:
-            return None
-         for key, default_val in RecipientDefinitions[recipient_token].items():
-            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
+#      if recipient_token is not None:
+#         if recipient_token not in RecipientDefinitions:
+#            return None
+#         for key, default_val in RecipientDefinitions[recipient_token].items():
+#            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
       return GenericActionConfiguration.format(name, token, '\n'.join(params))
    print(f'Error: no action-template for {token}')
    return None
@@ -863,11 +875,11 @@ class VapixClient:
       ))
 
    # ----------------------------------------------------------------------------
-   # Event & Action API                                                      {{{2 
+   # Event & Action API                                                      {{{2
    # ----------------------------------------------------------------------------
 
    # ----------------------------------------------------------------------------
-   # Schedules                                                               {{{3 
+   # Schedules                                                               {{{3
    # ----------------------------------------------------------------------------
 
    def ListSchedules(self):
@@ -895,7 +907,7 @@ class VapixClient:
       return 'Failure' if success is None else 'Success'
 
    # ----------------------------------------------------------------------------
-   # ActionConfigurations                                                    {{{3 
+   # ActionConfigurations                                                    {{{3
    # ----------------------------------------------------------------------------
 
    def GetActionConfigurations(self):
@@ -930,7 +942,7 @@ class VapixClient:
             envelope = self.RemoveActionConfiguration(ac_id.text)
 
    # ----------------------------------------------------------------------------
-   # ActionRules                                                             {{{3 
+   # ActionRules                                                             {{{3
    # ----------------------------------------------------------------------------
 
    def GetActionRules(self):
@@ -993,10 +1005,11 @@ class VapixClient:
       Configure a Play audio clip when Call button pressed (or input 0
       toggles) when not Weekends and not After hours
       """
-      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', 'Play my clip', location = 'camera_clicks16k.au'))
+      # Note! A8105 expects audioclip with path, I8116 without path
+      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', 'Play my clip', location = '/etc/audioclips/camera_clicks16k.au'))
       config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
       if config is not None:
-      
+
          conditions = ConditionList()
          conditions.add(
             topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
@@ -1007,9 +1020,9 @@ class VapixClient:
             content_filter = 'boolean(//SimpleItem[@Name="id" and @Value="com.axis.schedules.weekends"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
          )
          req = GenericActionRule.format(
-            'Play an audioclip', 
+            'Play an audioclip',
             GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
-            conditions.serialize(), 
+            conditions.serialize(),
             config.text
          )
          envelope = self._simple_vapix_webservice_call(req)
@@ -1034,7 +1047,7 @@ class Executor:
       self.iteration_counter = 0
       self.tool_list = tool_list
       for cam in args.camera:
-         w = WebAccess(cam)
+         w = WebAccess(cam, context = StandardSSLContext())
          w.add_credentials(args.user, args.password)
          self.clients[cam] = VapixClient(w, args.raw)
 
