@@ -308,7 +308,7 @@ class WebAccess:
 # Schedules                                                                 {{{2
 #-------------------------------------------------------------------------------
 
-AddSchedule = """<?xml version="1.0" encoding="UTF-8"?>
+AddScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
 <Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
  <Header/>
  <Body >
@@ -316,15 +316,16 @@ AddSchedule = """<?xml version="1.0" encoding="UTF-8"?>
    <NewScheduledEvent>
     <Name>{0}</Name>
     <Schedule>
-     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{1}</ICalendar>
+     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{2}</ICalendar>
     </Schedule>
    </NewScheduledEvent>
   </AddScheduledEvent>
  </Body>
 </Envelope>
 """
+# <EventID>com.axis.schedules.genid.id-{1}</EventID>
 
-RemoveSchedule = """<?xml version="1.0" encoding="UTF-8"?>
+RemoveScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
 <Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
  <Header/>
  <Body >
@@ -335,7 +336,7 @@ RemoveSchedule = """<?xml version="1.0" encoding="UTF-8"?>
 </Envelope>
 """
 
-ListSchedules = """<?xml version="1.0" encoding="UTF-8"?>
+ListSchedulesXml = """<?xml version="1.0" encoding="UTF-8"?>
 <Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
  <Header/>
  <Body>
@@ -886,12 +887,16 @@ class VapixClient:
       """
       List the configured schedules (Recurrences)
       """
-      return self._simple_vapix_webservice_call(ListSchedules)
+      return self._simple_vapix_webservice_call(ListSchedulesXml)
 
-   def AddSchedule(self, name = 'TEST', ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+   def AddSchedule(self, name = 'TEST', event_id = '123', ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
       """
+      Add a schedule by first checking for existence of a schedule with the
+      same name, if it exists delete it. Then add the schedule
       """
-      req = AddSchedule.format(name, ical_spec)
+      schedules = self.ListSchedules()
+      return 'done for now'
+      req = AddScheduleXml.format(name, event_id, ical_spec)
       envelope = self._simple_vapix_webservice_call(req)
       config = envelope.find('SOAP-ENV:Body/aev:AddScheduledEventResponse/aev:EventID', MINIMAL_VAPIX_NAMESPACES)
       if config is not None:
@@ -901,7 +906,7 @@ class VapixClient:
    def RemoveSchedule(self, event_id = '0'):
       """
       """
-      req = RemoveSchedule.format(f'com.axis.schedules.genid.id-{event_id}')
+      req = RemoveScheduleXml.format(f'com.axis.schedules.genid.id-{event_id}')
       envelope = self._simple_vapix_webservice_call(req)
       success = envelope.find('SOAP-ENV:Body/aev:RemoveScheduledEventResponse', MINIMAL_VAPIX_NAMESPACES)
       return 'Failure' if success is None else 'Success'
