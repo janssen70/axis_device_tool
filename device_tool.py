@@ -316,6 +316,23 @@ AddScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
    <NewScheduledEvent>
     <Name>{0}</Name>
     <Schedule>
+     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{1}</ICalendar>
+    </Schedule>
+   </NewScheduledEvent>
+  </AddScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+AddScheduleWithIDXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <AddScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <NewScheduledEvent>
+    <Name>{0}</Name>
+    <EventID>{1}</EventID>
+    <Schedule>
      <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{2}</ICalendar>
     </Schedule>
    </NewScheduledEvent>
@@ -323,7 +340,6 @@ AddScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
  </Body>
 </Envelope>
 """
-# <EventID>com.axis.schedules.genid.id-{1}</EventID>
 
 RemoveScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
 <Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
@@ -889,24 +905,52 @@ class VapixClient:
       """
       return self._simple_vapix_webservice_call(ListSchedulesXml)
 
-   def AddSchedule(self, name = 'TEST', event_id = '123', ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+   def AddSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
       """
       Add a schedule by first checking for existence of a schedule with the
       same name, if it exists delete it. Then add the schedule
       """
-      schedules = self.ListSchedules()
-      return 'done for now'
-      req = AddScheduleXml.format(name, event_id, ical_spec)
-      envelope = self._simple_vapix_webservice_call(req)
-      config = envelope.find('SOAP-ENV:Body/aev:AddScheduledEventResponse/aev:EventID', MINIMAL_VAPIX_NAMESPACES)
-      if config is not None:
-         return config.text
-      return 'Failed'
+      return self.AddSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
+
+   def AddSchedules(self, schedule_specifications : list):
+      """
+      Addition of multiple schedules, with a single listing of existing
+      schedules up-front to determine which ones to delete, to make the
+      resulting XML trace short and easier to understand
+      """
+      def name_to_id(envelope, name):
+         parent = envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)
+         for schedule in list(parent):
+            ev_name = schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)
+            if ev_name is not None:
+               if name == ev_name.text:
+                  event_id = schedule.find('aev:EventID', MINIMAL_VAPIX_NAMESPACES)
+                  return None if event_id is None else event_id.text
+         return None
+
+      envelope = self.ListSchedules()
+      for spec in schedule_specifications:
+         if (schedule_id := name_to_id(envelope, spec['name'])) is not None:
+            self.RemoveSchedule(schedule_id)
+            if spec['event_id'] is None:
+               spec['event_id'] = schedule_id
+
+      result = []
+      for spec in schedule_specifications:
+         if spec['event_id'] is None:
+            envelope = self._simple_vapix_webservice_call(AddScheduleXml.format(spec['name'], spec['ical_spec']))
+         else:
+            envelope = self._simple_vapix_webservice_call(AddScheduleWithIDXml.format(spec['name'], spec['event_id'], spec['ical_spec']))
+         if (config := envelope.find('SOAP-ENV:Body/aev:AddScheduledEventResponse/aev:EventID', MINIMAL_VAPIX_NAMESPACES)) is None:
+            result.append(spec['event_id'])
+         else:
+            result.append(config.text)
+      return result
 
    def RemoveSchedule(self, event_id = '0'):
       """
       """
-      req = RemoveScheduleXml.format(f'com.axis.schedules.genid.id-{event_id}')
+      req = RemoveScheduleXml.format(event_id)
       envelope = self._simple_vapix_webservice_call(req)
       success = envelope.find('SOAP-ENV:Body/aev:RemoveScheduledEventResponse', MINIMAL_VAPIX_NAMESPACES)
       return 'Failure' if success is None else 'Success'
@@ -1007,34 +1051,54 @@ class VapixClient:
 
    def ActionRuleTest(self):
       """
-      Configure a Play audio clip when Call button pressed (or input 0
-      toggles) when not Weekends and not After hours
+      Configure two rules to Play audio clip when Call button pressed (or input 0
+      toggles) when two schedules are not active. Inspired by a specific troubleshoot
+      but usefull as general example for configuring event rules.
       """
-      # Note! A8105 expects audioclip with path, I8116 without path
-      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', 'Play my clip', location = '/etc/audioclips/camera_clicks16k.au'))
-      config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
-      if config is not None:
-
-         conditions = ConditionList()
-         conditions.add(
-            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-            content_filter = 'boolean(//SimpleItem[@Name="id" and @Value="com.axis.schedules.after_hours"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-         )
-         conditions.add(
-            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-            content_filter = 'boolean(//SimpleItem[@Name="id" and @Value="com.axis.schedules.weekends"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-         )
-         req = GenericActionRule.format(
-            'Play an audioclip',
-            GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
-            conditions.serialize(),
-            config.text
-         )
-         envelope = self._simple_vapix_webservice_call(req)
-         config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name):
+         # Note! Older Axis OS expects audioclip with path, later ones without path
+         envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
+         config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
          if config is not None:
-            return config.text
-      return None
+
+            conditions = ConditionList()
+            conditions.add(
+               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+            )
+            conditions.add(
+               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+            )
+            req = GenericActionRule.format(
+               actionrule_name,
+               GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
+               conditions.serialize(),
+               config.text
+            )
+            envelope = self._simple_vapix_webservice_call(req)
+            config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+            if config is not None:
+               return config.text
+         return None
+
+      schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 801
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700101T161000\nDTEND:19700101T163500\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 901
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T163500\nDTEND:19700101T235959\nRRULE:FREQ=WEEKLY;BYDAY=FR'}
+      ])
+
+      ids = [
+         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
+         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
+      ]
+
+      return ids
 
 # -------------------------------------------------------------------------------
 #
