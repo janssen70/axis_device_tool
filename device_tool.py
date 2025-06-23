@@ -46,7 +46,7 @@ import re
 import json
 import socket
 import ssl
-from typing import Optional, Union, Dict, List
+from typing import Optional, Union, Dict, List, Type
 import xml.etree.ElementTree as ET
 import pprint
 import configparser
@@ -544,6 +544,13 @@ class VapixClient:
       self.denamespacer = EventtopicDenamespacer(MINIMAL_VAPIX_NAMESPACES)
       self.params = {}
 
+   @classmethod
+   def functions(cls):
+      """
+      Return the list of supported functions
+      """
+      return [m for m in dir(cls) if isinstance(getattr(cls, m), collections.abc.Callable) and not m.startswith('_')]
+
    # ----------------------------------------------------------------------------
    # Communication functions                                                {{{2
    # ----------------------------------------------------------------------------
@@ -914,9 +921,10 @@ class VapixClient:
 
    def AddSchedules(self, schedule_specifications : list):
       """
-      Addition of multiple schedules, with a single listing of existing
-      schedules up-front to determine which ones to delete, to make the
-      resulting XML trace short and easier to understand
+      Addition of multiple schedules. It starts with a single listing of existing
+      schedules up-front to determine which ones to delete by name, and get to
+      know their EventID so it can be reused in case adding a schedule is in
+      fact recreating it.
       """
       def name_to_id(envelope, name):
          parent = envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)
@@ -1049,11 +1057,25 @@ class VapixClient:
                done = True
       return done
 
+# -------------------------------------------------------------------------------
+#
+#   Other                                                                   {{{1
+#
+# -------------------------------------------------------------------------------
+
+class MyUsecases(VapixClient):
+   """
+   Non-generic calls which don't make sense to include in base VapixClient
+   """
+
    def ActionRuleTest(self):
       """
       Configure two rules to Play audio clip when Call button pressed (or input 0
       toggles) when two schedules are not active. Inspired by a specific troubleshoot
       but usefull as general example for configuring event rules.
+
+      This one assumes you first delete the actionrule, then call this
+      function to create a new one
       """
       def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name):
          # Note! Older Axis OS expects audioclip with path, later ones without path
@@ -1082,7 +1104,21 @@ class VapixClient:
                return config.text
          return None
 
-      schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddSchedules([
+      schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddOrModifySchedules1()
+
+      ids = [
+         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
+         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
+      ]
+
+      return ids
+
+   def AddOrModifySchedules1(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # 801
@@ -1093,12 +1129,37 @@ class VapixClient:
          {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T163500\nDTEND:19700101T235959\nRRULE:FREQ=WEEKLY;BYDAY=FR'}
       ])
 
-      ids = [
-         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
-         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
-      ]
+   def AddOrModifySchedules2(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Weekdays
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700105T000000\nDTEND:19700110T000000\nRRULE:FREQ=WEEKLY'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Office hours
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T180000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
+      ])
 
-      return ids
+   def AddOrModifySchedules3(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Weekends
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700103T000000\nDTEND:19700105T000000\nRRULE:FREQ=WEEKLY'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # After hours
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T180000\nDTEND:19700102T080000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
+      ])
 
 # -------------------------------------------------------------------------------
 #
@@ -1110,15 +1171,16 @@ class Executor:
    """
    A class to assemble the list of functions to call, and runnning the requested sequence
    """
-   def __init__(self, args, tool_list):
+   def __init__(self, args, interface: Type[VapixClient]):
       self.args = args
       self.clients = {}
       self.iteration_counter = 0
-      self.tool_list = tool_list
+      self.interface = interface
+      self.tool_list = interface.functions()
       for cam in args.camera:
          w = WebAccess(cam, context = StandardSSLContext())
          w.add_credentials(args.user, args.password)
-         self.clients[cam] = VapixClient(w, args.raw)
+         self.clients[cam] = interface(w, args.raw)
 
    def run(self):
       """
@@ -1198,20 +1260,14 @@ if __name__ == '__main__':
          config.read_string(settings)
       return config
 
-   def get_functions(the_class):
-      """
-      Get the list of supported functions
-      """
-      return [m for m in dir(the_class) if isinstance(getattr(the_class, m), collections.abc.Callable) and not m.startswith('_')]
-
-   def create_parser(config: configparser.ConfigParser, tool_list: List[str]) -> argparse.ArgumentParser:
+   def create_parser(config: configparser.ConfigParser, interface: VapixClient) -> argparse.ArgumentParser:
       """
       Define the commandline. It picks default values from 'config'
       """
       p = argparse.ArgumentParser(
          description = 'Collection of commands to interact with Axis cameras.\nCommands can be run in sequence with wait times in between',
          formatter_class = argparse.RawDescriptionHelpFormatter,
-         epilog = 'Functions:\n{}\n\n'.format('\n'.join(tool_list))
+         epilog = 'Functions:\n{}\n\n'.format('\n'.join(interface.functions()))
       )
 
       p.add_argument(
@@ -1252,8 +1308,11 @@ if __name__ == '__main__':
       Pre-check some arguments and pass on to Executor-instance
       """
       config = read_config()
-      tool_list = get_functions(VapixClient)
-      parser = create_parser(config, tool_list)
+      # interface = VapixClient
+      # Or..
+      interface = MyUsecases
+      tool_list = interface.functions()
+      parser = create_parser(config, interface)
       args = parser.parse_args()
       if args.camera is None:
          if 'axis_device_ip' in config['default']:
@@ -1265,12 +1324,12 @@ if __name__ == '__main__':
       if args.document:
          for func in args.function:
             if func in tool_list:
-               print(getattr( VapixClient, func).__doc__)
+               print(getattr(interface, func).__doc__)
             else:
                print(f'Unsupported: {func}')
          sys.exit(0)
 
-      Executor(args, tool_list).run()
+      Executor(args, interface).run()
 
    main()
 
