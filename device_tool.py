@@ -45,7 +45,8 @@ import datetime
 import re
 import json
 import socket
-from typing import Optional, Union, Dict, List
+import ssl
+from typing import Optional, Union, Dict, List, Type
 import xml.etree.ElementTree as ET
 import pprint
 import configparser
@@ -197,6 +198,17 @@ DEBUG_HTTP = 0
 # Example proxy: 'http://username:password@proxy.yourdomain:3128'
 
 
+def StandardSSLContext():
+   """
+   Return a SSL context that tells to ignore certificate validity. Maybe not a
+   good idea in general but it does gets us through invalid configurations and
+   perform hard factory defaults
+   """
+   ctx = ssl.create_default_context()
+   ctx.check_hostname = False
+   ctx.verify_mode = ssl.CERT_NONE
+   return ctx
+
 class WebAccess:
    """
    A urllib based http-client. There are no real advantages to the urllib
@@ -288,6 +300,202 @@ class WebAccess:
 
 # -------------------------------------------------------------------------------
 #
+#   Events and Actions support functions                                    {{{1
+#
+# -------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+# Schedules                                                                 {{{2
+#-------------------------------------------------------------------------------
+
+AddScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <AddScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <NewScheduledEvent>
+    <Name>{0}</Name>
+    <Schedule>
+     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{1}</ICalendar>
+    </Schedule>
+   </NewScheduledEvent>
+  </AddScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+AddScheduleWithIDXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <AddScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <NewScheduledEvent>
+    <Name>{0}</Name>
+    <EventID>{1}</EventID>
+    <Schedule>
+     <ICalendar Dialect="http://www.axis.com/vapix/ws/ical1">{2}</ICalendar>
+    </Schedule>
+   </NewScheduledEvent>
+  </AddScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+RemoveScheduleXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+  <RemoveScheduledEvent xmlns="http://www.axis.com/vapix/ws/event1">
+   <EventID>{0}</EventID>
+  </RemoveScheduledEvent>
+ </Body>
+</Envelope>
+"""
+
+ListSchedulesXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body>
+   <GetScheduledEvents xmlns="http://www.axis.com/vapix/ws/event1"/>
+ </Body>
+</Envelope>
+"""
+
+#-------------------------------------------------------------------------------
+# ActionConfiguration and -Rules                                            {{{2
+#-------------------------------------------------------------------------------
+
+GenericActionEnvelope = """<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+	<soap:Body>
+		<act:{0} xmlns="http://www.axis.com/vapix/ws/action1">
+		</act:{0}>
+	</soap:Body>
+</soap:Envelope>
+"""
+GenericActionRule = """<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" >
+  <SOAP-ENV:Header/>
+  <SOAP-ENV:Body xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:aev="http://www.axis.com/vapix/ws/event1" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:tns1="http://www.onvif.org/ver10/topics" xmlns:tnsaxis="http://www.axis.com/2009/event/topics">
+      <act:AddActionRule>
+        <act:NewActionRule>
+          <act:Name>{0}</act:Name>
+             {1}
+          <act:Enabled>true</act:Enabled>
+          <act:Conditions>
+             {2}
+          </act:Conditions>
+          <act:PrimaryAction>{3}</act:PrimaryAction>
+        </act:NewActionRule>
+      </act:AddActionRule>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>
+"""
+
+GenericCondition = """<act:Condition>
+   <wsnt:TopicExpression Dialect="http://docs.oasis-open.org/wsn/t-1/TopicExpression/Concrete">{0}</wsnt:TopicExpression>
+   <wsnt:MessageContent Dialect="http://www.onvif.org/ver10/tev/messageContentFilter/ItemFilter">{1}</wsnt:MessageContent>
+</act:Condition>
+"""
+
+GenericStartEvent = """<act:StartEvent>
+  <wsnt:TopicExpression Dialect="http://docs.oasis-open.org/wsn/t-1/TopicExpression/Concrete" xmlns="http://docs.oasis-open.org/wsn/b-2">{0}</wsnt:TopicExpression>
+  <wsnt:MessageContent Dialect="http://www.onvif.org/ver10/tev/messageContentFilter/ItemFilter" xmlns="http://docs.oasis-open.org/wsn/b-2">{1}</wsnt:MessageContent>
+</act:StartEvent>
+"""
+
+
+ActionDefinitions = {
+  'com.axis.action.fixed.notification.http': {
+     'recipient_token': 'com.axis.recipient.http',
+     'params': {'parameters': '', 'message': ''}
+  },
+  'com.axis.action.fixed.play.audioclip': {
+     'recipient_token': None,
+     'params': {
+        'location': '',
+#        'audiooutput': '',
+#        'audiodeviceid': '0',
+#        'audiooutputid': '0',
+#        'repeat': '0',
+#        'volume': '100'
+     }
+  }
+}
+
+GenericActionConfiguration = """<?xml version="1.0" encoding="UTF-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope">
+   <SOAP-ENV:Header/>
+   <SOAP-ENV:Body xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:aev="http://www.axis.com/vapix/ws/event1" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:tns1="http://www.onvif.org/ver10/topics" xmlns:tnsaxis="http://www.axis.com/2009/event/topics">
+     <act:AddActionConfiguration>
+      <act:NewActionConfiguration>
+        <act:Name>{}</act:Name>
+        <act:TemplateToken>{}</act:TemplateToken>
+        <act:Parameters>
+         {}
+        </act:Parameters>
+      </act:NewActionConfiguration>
+     </act:AddActionConfiguration>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>
+"""
+
+GenericRemoveEnvelope = """<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+	<soap:Body>
+		<act:{0} xmlns="http://www.axis.com/vapix/ws/action1">
+          <act:{1}>{2}</act:{1}>
+		</act:{0}>
+	</soap:Body>
+</soap:Envelope>
+"""
+
+GET_ACTION_RULES = GenericActionEnvelope.format('GetActionRules')
+GET_ACTION_CONFIGURATIONS = GenericActionEnvelope.format('GetActionConfigurations')
+REMOVE_ACTION_CONFIGURATION = GenericRemoveEnvelope.format('RemoveActionConfiguration', 'ConfigurationID', '{}')
+REMOVE_ACTION_RULE = GenericRemoveEnvelope.format('RemoveActionRule', 'RuleID', '{}')
+
+class Condition:
+   def __init__(self, topic, content_filter):
+      self.topic = topic
+      self.content_filter = content_filter
+
+   def serialize(self):
+      return GenericCondition.format(self.topic, self.content_filter)
+
+class ConditionList:
+   def __init__(self):
+      self.conditions = []
+
+   def add(self, topic, content_filter):
+      self.conditions.append(Condition(topic, content_filter))
+
+   def serialize(self):
+      return '\n'.join([c.serialize() for c in self.conditions])
+
+def MakeActionConfiguration(token, name, **kwargs):
+   """
+   Generate an action configuration 'in place', use recipient parameters as
+   present in 'kwargs'
+
+   The action configuration parameter content is a merge of the recipient
+   template parameters and the action template
+   """
+   if token in ActionDefinitions:
+      recipient_token = ActionDefinitions[token]['recipient_token']
+      params = []
+      for key, default_val in ActionDefinitions[token]['params'].items():
+         params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key,  default_val)))
+#      if recipient_token is not None:
+#         if recipient_token not in RecipientDefinitions:
+#            return None
+#         for key, default_val in RecipientDefinitions[recipient_token].items():
+#            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
+      return GenericActionConfiguration.format(name, token, '\n'.join(params))
+   print(f'Error: no action-template for {token}')
+   return None
+
+# -------------------------------------------------------------------------------
+#
 #   VAPIX Client                                                            {{{1
 #
 # -------------------------------------------------------------------------------
@@ -313,7 +521,6 @@ LIST_FEATUREFLAGS = """
 }
 """
 
-
 class VapixClient:
    """
    This class implements several VAPIX requests. Note that since VAPIX-inception
@@ -336,6 +543,13 @@ class VapixClient:
       self.denamespacer = EventtopicDenamespacer(MINIMAL_VAPIX_NAMESPACES)
       self.params = {}
 
+   @classmethod
+   def functions(cls):
+      """
+      Return the list of supported functions
+      """
+      return [m for m in dir(cls) if isinstance(getattr(cls, m), collections.abc.Callable) and not m.startswith('_')]
+
    # ----------------------------------------------------------------------------
    # Communication functions                                                {{{2
    # ----------------------------------------------------------------------------
@@ -353,19 +567,25 @@ class VapixClient:
          print(f'\nReply:\n========\n{plain_data.decode("utf-8")}\n')
          sys.stdout.flush()
 
+   def _dump_xml(self, title: str, xml : ET.Element):
+      if self.debug:
+         print(f'\n{title}:\n========\n')
+         xml_indent(xml)
+         ET.dump(xml)
+         sys.stdout.flush()
+
+   def _dump_xml_request(self, xml : ET.Element):
+      self._dump_xml('Request', xml)
+
+   def _dump_xml_reply(self, xml : ET.Element):
+      self._dump_xml('Reply', xml)
+
    def _dump_txt_request_as_xml(self, req):
       if self.debug:
          print('\nRequest:\n========\n')
          x = ET.fromstring(req)
          xml_indent(x)
          ET.dump(x)
-         sys.stdout.flush()
-
-   def _dump_xml_reply(self, xml):
-      if self.debug:
-         print('\nReply:\n====\n')
-         xml_indent(xml)
-         ET.dump(xml)
          sys.stdout.flush()
 
    def _simple_vapix_call(self,
@@ -642,10 +862,8 @@ class VapixClient:
 
       def show_event(subcategory, event, tf_base):
          event_name = nice_name(event)
-         event_title = f'{subcategory}{
-             " - " if len(subcategory) else ""}{event_name}'
-         result.append(f' {event_title:<40}\teventtopic={
-                       tf_base}/{self.denamespacer.tag(event.tag)}')
+         event_title = f'{subcategory}{ " - " if len(subcategory) else ""}{event_name}'
+         result.append(f' {event_title:<40}\teventtopic={tf_base}/{self.denamespacer.tag(event.tag)}')
 
       request_body = '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body xmlns:xsd="http://www.w3.org/2001/XMLSchema"> <GetEventInstances xmlns="http://www.axis.com/vapix/ws/event1"/></s:Body></s:Envelope>'
       envelope = self._simple_vapix_webservice_call(request_body)
@@ -681,26 +899,289 @@ class VapixClient:
          LIST_FEATUREFLAGS
       ))
 
+   # ----------------------------------------------------------------------------
+   # Event & Action API                                                      {{{2
+   # ----------------------------------------------------------------------------
+
+   # ----------------------------------------------------------------------------
+   # Schedules                                                               {{{3
+   # ----------------------------------------------------------------------------
+
+   def ListSchedules(self):
+      """
+      List the configured schedules (Recurrences)
+      """
+      return self._simple_vapix_webservice_call(ListSchedulesXml)
+
+   def AddSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+      """
+      Add a schedule by first checking for existence of a schedule with the
+      same name, if it exists delete it. Then add the schedule
+      """
+      return self.AddSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
+
+   def AddSchedules(self, schedule_specifications : list):
+      """
+      Addition of multiple schedules. It starts with a single listing of existing
+      schedules up-front to determine which ones to delete by name, and get to
+      know their EventID so it can be reused in case adding a schedule is in
+      fact recreating it.
+      """
+      def name_to_id(envelope, name):
+         parent = envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)
+         for schedule in list(parent):
+            ev_name = schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)
+            if ev_name is not None:
+               if name == ev_name.text:
+                  event_id = schedule.find('aev:EventID', MINIMAL_VAPIX_NAMESPACES)
+                  return None if event_id is None else event_id.text
+         return None
+
+      envelope = self.ListSchedules()
+      for spec in schedule_specifications:
+         if (schedule_id := name_to_id(envelope, spec['name'])) is not None:
+            self.RemoveSchedule(schedule_id)
+            if spec['event_id'] is None:
+               spec['event_id'] = schedule_id
+
+      result = []
+      for spec in schedule_specifications:
+         if spec['event_id'] is None:
+            envelope = self._simple_vapix_webservice_call(AddScheduleXml.format(spec['name'], spec['ical_spec']))
+         else:
+            envelope = self._simple_vapix_webservice_call(AddScheduleWithIDXml.format(spec['name'], spec['event_id'], spec['ical_spec']))
+         if (config := envelope.find('SOAP-ENV:Body/aev:AddScheduledEventResponse/aev:EventID', MINIMAL_VAPIX_NAMESPACES)) is None:
+            result.append(spec['event_id'])
+         else:
+            result.append(config.text)
+      return result
+
+   def RemoveSchedule(self, event_id = '0'):
+      """
+      """
+      req = RemoveScheduleXml.format(event_id)
+      envelope = self._simple_vapix_webservice_call(req)
+      success = envelope.find('SOAP-ENV:Body/aev:RemoveScheduledEventResponse', MINIMAL_VAPIX_NAMESPACES)
+      return 'Failure' if success is None else 'Success'
+
+   # ----------------------------------------------------------------------------
+   # ActionConfigurations                                                    {{{3
+   # ----------------------------------------------------------------------------
+
+   def GetActionConfigurations(self):
+      """
+      Call: GetActionConfigurations
+
+      (use -r)
+      """
+      return self._simple_vapix_webservice_call( GET_ACTION_CONFIGURATIONS )
+
+   def RemoveActionConfiguration(self, action_id):
+      """
+      Call: RemoveActionConfiguration(action_id=integer)
+
+      Remove an action configuration (make sure to remove the related
+      ActionRule yourself)
+      """
+      return self._simple_vapix_webservice_call(REMOVE_ACTION_CONFIGURATION.format(action_id))
+
+   def RemoveActionConfigurations(self):
+      """
+      Call: RemoveActionConfigurations
+
+      Query the action configurations present on the device, and remove them
+      one by one (make sure to remove the related ActionRules yourself)
+      """
+      envelope = self.GetActionConfigurations()
+      ac_set = envelope.find('SOAP-ENV:Body/act:GetActionConfigurationsResponse/act:ActionConfigurations', MINIMAL_VAPIX_NAMESPACES)
+      for ac in list(ac_set):
+         ac_id = ac.find('act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
+         if ac_id is not None:
+            envelope = self.RemoveActionConfiguration(ac_id.text)
+
+   # ----------------------------------------------------------------------------
+   # ActionRules                                                             {{{3
+   # ----------------------------------------------------------------------------
+
+   def GetActionRules(self):
+      """
+      Call: GetActionRules
+
+      (use -r)
+      """
+      return self._simple_vapix_webservice_call(GET_ACTION_RULES)
+
+   def RemoveActionRule(self, rule_id):
+      """
+      Call: RemoveActionRule(rule_id=integer)
+
+      Remove an action rule. Does not remove the related action configuration!
+      For that use RemoveActionRuleComplete() instead
+      """
+      self._simple_vapix_webservice_call(REMOVE_ACTION_RULE.format(rule_id))
+
+   def RemoveActionRules(self):
+      """
+      Call: RemoveActionRules
+
+      Query all action rules present on the device, and removed them one by
+      one (does not remove related action configurations, make sure to call
+      RemoveActionConfigurations() yourself)
+      """
+      envelope = self.GetActionRules()
+      rule_set = envelope.find('SOAP-ENV:Body/act:GetActionRulesResponse/act:ActionRules', MINIMAL_VAPIX_NAMESPACES)
+      for rule in list(rule_set):
+         r_id = rule.find('act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if r_id is not None:
+            self.RemoveActionRule(r_id.text)
+
+   def RemoveActionRuleComplete(self, rule_id):
+      """
+      Call: RemoveActionRuleComplete(rule_id=integer)
+
+      Remove an action rule including it's related action configuration. This
+      function leaves the event configuration in a consistent state
+
+      Get the rule_id's using GetActionRules
+      """
+      done = False
+      envelope = self.GetActionRules()
+      rule_set = envelope.find('SOAP-ENV:Body/act:GetActionRulesResponse/act:ActionRules', MINIMAL_VAPIX_NAMESPACES)
+      for rule in list(rule_set):
+         r_id = rule.find('act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if r_id is not None:
+            if r_id.text == rule_id:
+               action_id = rule.find('act:PrimaryAction', MINIMAL_VAPIX_NAMESPACES)
+               self.RemoveActionRule(rule_id)
+               if action_id is not None:
+                  self.RemoveActionConfiguration(action_id.text)
+               done = True
+      return done
+
+# -------------------------------------------------------------------------------
+#
+#   Other                                                                   {{{1
+#
+# -------------------------------------------------------------------------------
+
+class MyUsecases(VapixClient):
+   """
+   Non-generic calls which don't make sense to include in base VapixClient
+   """
+
+   def ActionRuleTest(self):
+      """
+      Configure two rules to Play audio clip when Call button pressed (or input 0
+      toggles) when two schedules are not active. Inspired by a specific troubleshoot
+      but usefull as general example for configuring event rules.
+
+      This one assumes you first delete the actionrule, then call this
+      function to create a new one
+      """
+      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name):
+         # Note! Older Axis OS expects audioclip with path, later ones without path
+         envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
+         config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
+         if config is not None:
+
+            conditions = ConditionList()
+            conditions.add(
+               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+            )
+            conditions.add(
+               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+            )
+            req = GenericActionRule.format(
+               actionrule_name,
+               GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
+               conditions.serialize(),
+               config.text
+            )
+            envelope = self._simple_vapix_webservice_call(req)
+            config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+            if config is not None:
+               return config.text
+         return None
+
+      schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddOrModifySchedules1()
+
+      ids = [
+         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
+         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
+      ]
+
+      return ids
+
+   def AddOrModifySchedules1(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 801
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700101T161000\nDTEND:19700101T163500\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # 901
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T163500\nDTEND:19700101T235959\nRRULE:FREQ=WEEKLY;BYDAY=FR'}
+      ])
+
+   def AddOrModifySchedules2(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Weekdays
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700105T000000\nDTEND:19700110T000000\nRRULE:FREQ=WEEKLY'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Office hours
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T180000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
+      ])
+
+   def AddOrModifySchedules3(self):
+      """
+      Redefines the schedule in use by the action-rule created by
+      ActionRuleTest
+      """
+      return self.AddSchedules([
+         # 800
+         {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # Weekends
+         {'name': 'My Schedule 2', 'event_id': None, 'ical_spec': 'DTSTART:19700103T000000\nDTEND:19700105T000000\nRRULE:FREQ=WEEKLY'},
+         # 900
+         {'name': 'My Schedule 3', 'event_id': None, 'ical_spec': 'DTSTART:19700101T080000\nDTEND:19700101T161000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
+         # After hours
+         {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T180000\nDTEND:19700102T080000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
+      ])
+
 # -------------------------------------------------------------------------------
 #
 #   Main                                                                    {{{1
 #
 # -------------------------------------------------------------------------------
 
-
 class Executor:
    """
    A class to assemble the list of functions to call, and runnning the requested sequence
    """
-   def __init__(self, args, tool_list):
+   def __init__(self, args, interface: Type[VapixClient]):
       self.args = args
       self.clients = {}
       self.iteration_counter = 0
-      self.tool_list = tool_list
+      self.interface = interface
+      self.tool_list = interface.functions()
       for cam in args.camera:
-         w = WebAccess(cam)
+         w = WebAccess(cam, context = StandardSSLContext())
          w.add_credentials(args.user, args.password)
-         self.clients[cam] = VapixClient(w, args.raw)
+         self.clients[cam] = interface(w, args.raw)
 
    def run(self):
       """
@@ -747,6 +1228,10 @@ class Executor:
                   print(r)
                elif isinstance(r, bytes):
                   print(r.decode('utf-8'))
+               elif isinstance(r, ET.Element):
+                  xml_indent(r)
+                  ET.dump(r)
+                  sys.stdout.flush()
                else:
                   pprint.pprint(r)
             else:
@@ -776,20 +1261,14 @@ if __name__ == '__main__':
          config.read_string(settings)
       return config
 
-   def get_functions(the_class):
-      """
-      Get the list of supported functions
-      """
-      return [m for m in dir(the_class) if isinstance(getattr(the_class, m), collections.abc.Callable) and not m.startswith('_')]
-
-   def create_parser(config: configparser.ConfigParser, tool_list: List[str]) -> argparse.ArgumentParser:
+   def create_parser(config: configparser.ConfigParser, interface: VapixClient) -> argparse.ArgumentParser:
       """
       Define the commandline. It picks default values from 'config'
       """
       p = argparse.ArgumentParser(
          description = 'Collection of commands to interact with Axis cameras.\nCommands can be run in sequence with wait times in between',
          formatter_class = argparse.RawDescriptionHelpFormatter,
-         epilog = 'Functions:\n{}\n\n'.format('\n'.join(tool_list))
+         epilog = 'Functions:\n{}\n\n'.format('\n'.join(interface.functions()))
       )
 
       p.add_argument(
@@ -830,8 +1309,11 @@ if __name__ == '__main__':
       Pre-check some arguments and pass on to Executor-instance
       """
       config = read_config()
-      tool_list = get_functions(VapixClient)
-      parser = create_parser(config, tool_list)
+      # interface = VapixClient
+      # Or..
+      interface = MyUsecases
+      tool_list = interface.functions()
+      parser = create_parser(config, interface)
       args = parser.parse_args()
       if args.camera is None:
          if 'axis_device_ip' in config['default']:
@@ -843,12 +1325,12 @@ if __name__ == '__main__':
       if args.document:
          for func in args.function:
             if func in tool_list:
-               print(getattr( VapixClient, func).__doc__)
+               print(getattr(interface, func).__doc__)
             else:
                print(f'Unsupported: {func}')
          sys.exit(0)
 
-      Executor(args, tool_list).run()
+      Executor(args, interface).run()
 
    main()
 

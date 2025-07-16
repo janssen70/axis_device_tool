@@ -67,6 +67,29 @@ Supported operations
 | Wait | Inserts a delay, usefull when executing a series of functions |
 
 
+
+Event information
+-----------------
+The output from GetEventInfo shows each events' "nice name" followed by a specification for use directly in event metadata subscriptions. For example, given this output:
+
+```
+CameraApplicationPlatform
+ Blocked View Detection - Blocked View Detection    eventtopic=axis:CameraApplicationPlatform/BlockedViewDetection/BlockedViewDetection
+ Loitering Guard - Loitering Guard: Any Profile eventtopic=axis:CameraApplicationPlatform/LoiteringGuard/Camera1ProfileANY
+ Loitering Guard - Loitering Guard: Profile 1   eventtopic=axis:CameraApplicationPlatform/LoiteringGuard/Camera1Profile1
+ Video Motion Detection - VMD 4: Any Profile    eventtopic=axis:CameraApplicationPlatform/VMD/Camera1ProfileANY
+ Video Motion Detection - VMD 4: Profile 1  eventtopic=axis:CameraApplicationPlatform/VMD/Camera1Profile1
+```
+You can start listening to VMD 4 detections for all profiles on the RTSP metadata stream as follows:
+
+```
+rtsp://a.b.c.d/axis-media/media.amp?video=0&audio=0&event=on&eventtopic=axis:CameraApplicationPlatform/VMD/Camera1ProfileANY
+```
+
+The [Axis Metadata Monitor](https://www.axis.com/developer-community/axis-metadata-monitor) is very usefull for this. A commandline alternative is my script [axis_websocket_events](https://github.com/janssen70/axis_websocket_events) which listens to the same events, but over websocket instead. It's README show it use for the same event. It is similar, you just need to leave out the RTSP-url specific "eventtopic=" prefix.
+
+
+
 License
 -------
 
