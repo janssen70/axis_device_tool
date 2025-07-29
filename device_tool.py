@@ -834,6 +834,26 @@ class VapixClient:
          return f'File not found: {filename}'
 
    # ----------------------------------------------------------------------------
+   # I/O                                                                     {{{3
+   # ----------------------------------------------------------------------------
+
+   def VirtualIOOn(self, port = 1):
+      """
+      Call: VirtualIOOn(output=virtual port number)
+
+      Set a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/activate.cgi?schemaversion=1&port={port}')
+
+   def VirtualIOOff(self, port = 1):
+      """
+      Call: VirtualIOOff(output=virtual port number)
+
+      Reset a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/deactivate.cgi?schemaversion=1&port={port}')
+
+   # ----------------------------------------------------------------------------
    # Event Information                                                      {{{2
    # ----------------------------------------------------------------------------
 
@@ -912,14 +932,14 @@ class VapixClient:
       """
       return self._simple_vapix_webservice_call(ListSchedulesXml)
 
-   def AddSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+   def AddOrReplaceSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
       """
       Add a schedule by first checking for existence of a schedule with the
       same name, if it exists delete it. Then add the schedule
       """
-      return self.AddSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
+      return self.AddOrReplaceSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
 
-   def AddSchedules(self, schedule_specifications : list):
+   def AddOrReplaceSchedules(self, schedule_specifications : list):
       """
       Addition of multiple schedules. It starts with a single listing of existing
       schedules up-front to determine which ones to delete by name, and get to
@@ -1077,7 +1097,7 @@ class MyUsecases(VapixClient):
       This one assumes you first delete the actionrule, then call this
       function to create a new one
       """
-      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name):
+      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name, use_virtual_input: bool = False):
          # Note! Older Axis OS expects audioclip with path, later ones without path
          envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
          config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
@@ -1092,6 +1112,13 @@ class MyUsecases(VapixClient):
                topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
                content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
             )
+            if use_virtual_input:
+               # Combine with a virtual input (to try silence the event on
+               # schedule-modifications)
+               conditions.add(
+                  topic = 'tns1:Device/tnsaxis:IO/VirtualInput',
+                  content_filter = 'boolean(//SimpleItem[@Name="port" and @Value="9"]) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
+               )
             req = GenericActionRule.format(
                actionrule_name,
                GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
@@ -1118,7 +1145,7 @@ class MyUsecases(VapixClient):
       Redefines the schedule in use by the action-rule created by
       ActionRuleTest
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # 801
@@ -1134,7 +1161,7 @@ class MyUsecases(VapixClient):
       Redefines the schedule in use by the action-rule created by
       ActionRuleTest
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # Weekdays
@@ -1150,7 +1177,7 @@ class MyUsecases(VapixClient):
       Redefines the schedule in use by the action-rule created by
       ActionRuleTest
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # Weekends
