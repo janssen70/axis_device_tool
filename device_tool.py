@@ -948,10 +948,8 @@ class VapixClient:
       fact recreating it.
       """
       def name_to_id(envelope, name):
-         parent = envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)
-         for schedule in list(parent):
-            ev_name = schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)
-            if ev_name is not None:
+         for schedule in list(envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)):
+            if (ev_name := schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)) is not None:
                if name == ev_name.text:
                   event_id = schedule.find('aev:EventID', MINIMAL_VAPIX_NAMESPACES)
                   return None if event_id is None else event_id.text
@@ -1095,7 +1093,7 @@ class MyUsecases(VapixClient):
       toggles) when two schedules are not active. Inspired by a specific troubleshoot
       but usefull as general example for configuring event rules.
 
-      This one assumes you first delete the actionrule, then call this
+      This test assumes you first delete the actionrule to start clean, then call this
       function to create a new one
       """
       def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name, use_virtual_input: bool = False):
@@ -1143,8 +1141,8 @@ class MyUsecases(VapixClient):
 
    def AddOrModifySchedules1(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
       return self.AddOrReplaceSchedules([
          # 800
@@ -1159,8 +1157,8 @@ class MyUsecases(VapixClient):
 
    def AddOrModifySchedules2(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
       return self.AddOrReplaceSchedules([
          # 800
@@ -1175,8 +1173,8 @@ class MyUsecases(VapixClient):
 
    def AddOrModifySchedules3(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
       return self.AddOrReplaceSchedules([
          # 800
