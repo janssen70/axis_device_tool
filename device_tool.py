@@ -52,6 +52,7 @@ import pprint
 import configparser
 
 import collections.abc
+from abc import ABC, abstractmethod
 
 import http.cookiejar
 import http.client
@@ -454,13 +455,24 @@ GET_ACTION_CONFIGURATIONS = GenericActionEnvelope.format('GetActionConfiguration
 REMOVE_ACTION_CONFIGURATION = GenericRemoveEnvelope.format('RemoveActionConfiguration', 'ConfigurationID', '{}')
 REMOVE_ACTION_RULE = GenericRemoveEnvelope.format('RemoveActionRule', 'RuleID', '{}')
 
-class Condition:
+class TopicFilter(ABC):
    def __init__(self, topic, content_filter):
       self.topic = topic
       self.content_filter = content_filter
 
+   @abstractmethod
+   def serialize(self):
+      pass
+
+class Condition(TopicFilter):
+
    def serialize(self):
       return GenericCondition.format(self.topic, self.content_filter)
+
+class StartEvent(TopicFilter):
+
+   def serialize(self):
+      return GenericStartEvent.format(self.topic, self.content_filter)
 
 class ConditionList:
    def __init__(self):
@@ -1076,6 +1088,67 @@ class VapixClient:
                done = True
       return done
 
+   #----------------------------------------------------------------------------
+   # Input/Output, Digital I/O                                              {{{2
+   #----------------------------------------------------------------------------
+
+   def IOOn(self, output = 1):
+      """
+      Call: IOOn( output=output number )
+
+      Set an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/port.cgi?action={output}%3A%2F')
+
+   def IOOff(self, output = 1):
+      """
+      Call: IOOn( output=output number )
+
+      Reset an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/port.cgi?action={output}%3A%5C')
+
+   def VirtualIOOn(self, port = 1):
+      """
+      Call: VirtualIOOn(output=virtual port number)
+
+      Set a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/activate.cgi?schemaversion=1&port={port}')
+
+   def VirtualIOOff(self, port = 1):
+      """
+      Call: VirtualIOOff(output=virtual port number)
+
+      Reset a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/deactivate.cgi?schemaversion=1&port={port}')
+
+   def ManualTriggerOn(self):
+      """
+      Call: ManualTriggerOn
+
+      Switch on the manual trigger
+      """
+      return self._simple_vapix_call('/axis-cgi/io/virtualinput.cgi?action=6%3A%2F')
+
+   def ManualTriggerOff(self):
+      """
+      Call: ManualTriggerOff
+
+      Switch off the manual trigger
+      """
+      return self._simple_vapix_call('/axis-cgi/io/virtualinput.cgi?action=6%3A%5C')
+
+
+   def IOPulse(self, output = 1, duration = 1000):
+      """
+      Call: IOPulse( output=output number, duration=milliseconds
+
+      Enable, wait, disable for an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/output.cgi?action={output}:/{duration}\\')
+
 # -------------------------------------------------------------------------------
 #
 #   Other                                                                   {{{1
@@ -1087,57 +1160,83 @@ class MyUsecases(VapixClient):
    Non-generic calls which don't make sense to include in base VapixClient
    """
 
-   def ActionRuleTest(self):
+   def _add_action_rule(self, actionrule_name, schedule_id_a, schedule_id_b, start_event, play_clip_name, use_virtual_input: bool = False):
       """
-      Configure two rules to Play audio clip when Call button pressed (or input 0
-      toggles) when two schedules are not active. Inspired by a specific troubleshoot
+      Implements the core logic for the ActionRuleTest_* functions
+      """
+      # Note! Older Axis OS expects audioclip with path, later ones without path?
+      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
+      if (config := envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)) is not None:
+
+         conditions = ConditionList()
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         if use_virtual_input:
+            # Combine with a virtual input (to try silence the event on
+            # schedule-modifications)
+            conditions.add(
+               topic = 'tns1:Device/tnsaxis:IO/VirtualInput',
+               content_filter = 'boolean(//SimpleItem[@Name="port" and @Value="9"]) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
+            )
+         req = GenericActionRule.format(
+            actionrule_name,
+            start_event.serialize(),
+            conditions.serialize(),
+            config.text
+         )
+         envelope = self._simple_vapix_webservice_call(req)
+         config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if config is not None:
+            return config.text
+      return None
+
+   def ActionRuleTest(self, start_event):
+      """
+      Configure two rules to Play audio clip triggered by 'start_event', when
+      when two schedules are not active. Inspired by a specific troubleshoot
       but usefull as general example for configuring event rules.
 
-      This test assumes you first delete the actionrule to start clean, then call this
-      function to create a new one
+      Pre: start with clean (empty) eventrule configuration
       """
-      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name, use_virtual_input: bool = False):
-         # Note! Older Axis OS expects audioclip with path, later ones without path
-         envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
-         config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
-         if config is not None:
-
-            conditions = ConditionList()
-            conditions.add(
-               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-            )
-            conditions.add(
-               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-            )
-            if use_virtual_input:
-               # Combine with a virtual input (to try silence the event on
-               # schedule-modifications)
-               conditions.add(
-                  topic = 'tns1:Device/tnsaxis:IO/VirtualInput',
-                  content_filter = 'boolean(//SimpleItem[@Name="port" and @Value="9"]) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
-               )
-            req = GenericActionRule.format(
-               actionrule_name,
-               GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
-               conditions.serialize(),
-               config.text
-            )
-            envelope = self._simple_vapix_webservice_call(req)
-            config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
-            if config is not None:
-               return config.text
-         return None
-
       schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddOrModifySchedules1()
 
+
       ids = [
-         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
-         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
+         self._add_action_rule('Play a clip 1', schedule_id1, schedule_id2, start_event, 'Play my clip 1'),
+         self._add_action_rule('Play a clip 2', schedule_id3, schedule_id4, start_event, 'Play my clip 2')
       ]
 
       return ids
+
+   def ActionRuleTest_byCallButton(self):
+      """
+      Configure the rule with Call button pressed (= input 0 toggles) as start
+      event
+      """
+      start_event = StartEvent(
+         'tns1:Device/tnsaxis:IO/Port',
+         'boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'
+      )
+      return self.ActionRuleTest(start_event)
+
+   def ActionRuleTest_byManualTrigger(self):
+      """
+      Configure the rule with Manual Trigger pressed as start event
+
+      Seems a bit of an oddity that we need to listen to port 1 while we need
+      to set virtual port 6 to trigger it
+      """
+      start_event = StartEvent(
+         'tns1:Device/tnsaxis:IO/VirtualPort',
+         'boolean(//SimpleItem[@Name="port" and @Value="1"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'
+      )
+      return self.ActionRuleTest(start_event)
 
    def AddOrModifySchedules1(self):
       """
