@@ -533,6 +533,19 @@ LIST_FEATUREFLAGS = """
 }
 """
 
+
+_MQTT_REQUEST = """{{
+    "apiVersion": "1.0",
+    "context": "123",
+    "method": "{}",
+    "params": {}
+}}
+"""
+
+MQTT_CLIENT_STATUS = _MQTT_REQUEST.format('getClientStatus', '{}')
+MQTT_ACTIVATE_CLIENT = _MQTT_REQUEST.format('activateClient', '{}')
+MQTT_DEACTIVATE_CLIENT = _MQTT_REQUEST.format('deactivateClient', '{}')
+
 class VapixClient:
    """
    This class implements several VAPIX requests. Note that since VAPIX-inception
@@ -637,8 +650,10 @@ class VapixClient:
          self._simple_vapix_call(
             url,
             data,
-            extra_headers={'Content-Type': 'application/json',
-                'Accept-Encoding': 'application/json'}
+            extra_headers = {
+               'Content-Type': 'application/json',
+               'Accept-Encoding': 'application/json'
+            }
          ).decode('utf-8')
       )
 
@@ -1148,6 +1163,90 @@ class VapixClient:
       Enable, wait, disable for an output pin
       """
       return self._simple_vapix_call(f'/axis-cgi/io/output.cgi?action={output}:/{duration}\\')
+
+   #----------------------------------------------------------------------------
+   # MQTT Setup                                                             {{{2
+   #----------------------------------------------------------------------------
+
+   def MQTTActivate(self):
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_ACTIVATE_CLIENT)
+
+   def MQTTDeactivate(self):
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_DEACTIVATE_CLIENT)
+
+   def MQTTGetConfig(self):
+      """
+      Returns current broker configuration
+      """
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_CLIENT_STATUS)
+
+   def MQTTConfig(self, broker_usr = '', broker_passwd = '', broker_addr = '192.168.2.95',  broker_port = 1883):
+      """
+      Configure the MQTT Client on a device with a simple TCP based
+      broker-connection. It takes care to not reconfigure if the settings are
+      already in place
+      """
+      # First get the MAC
+      # raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
+      # serial = raw_serial.split('=')[1]
+      print(serial)
+      current_config = self.MQTTGetConfig()
+      c = current_config['data']['config']
+      if c['server']['host'] != broker_addr or \
+         c['server']['port'] != broker_port or \
+         c.get('username', '') != broker_usr or \
+         c.get('password', '') != broker_passwd:
+
+         c['server']['host'] = broker_addr
+         c['server']['port'] = broker_port
+         c['server']['protocol'] = 'tcp'
+         c['username'] = broker_usr
+         c['password'] = broker_passwd
+         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', _MQTT_REQUEST.format('configureClient', json.dumps(c)))
+         return self.MQTTActivate()
+      return 'No change'
+
+   def MQTTRemoveEventPublications(self):
+      return self.MQTTAddEventPublications([])
+
+   def MQTTGetEventPublications(self):
+      """
+      Get the current event publications
+      """
+      response = self._json_vapix_call('/axis-cgi/mqtt/event.cgi', '{"apiVersion":"1.1","method":"getEventPublicationConfig"}')
+      return [r['topicFilter'] for r in response['data']['eventPublicationConfig']['eventFilterList']]
+
+   def MQTTAddEventPublications(self, topic_filter_list : list[str]):
+      publications_request = {
+         "apiVersion": "1.1",
+         "method": "configureEventPublication",
+         "params": {
+            "topicPrefix": "default",
+            "customTopicPrefix": "",
+            "appendEventTopic": True,
+            "includeSerialNumberInPayload": False,
+            "includeTopicNamespaces":True,
+            "eventFilterList": [{"topicFilter": t,"qos":0,"retain":"none"} for t in topic_filter_list]
+         }
+      }
+      return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', json.dumps(publications_request))
+
+   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
+      publications = self.MQTTGetEventPublications()
+      if topic_filter not in publications:
+         publications.append(topic_filter)
+         return self.MQTTAddEventPublications(publications)
+      else:
+         return 'No change'
+
+   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
+      publications = self.MQTTGetEventPublications()
+      last_len = len(publications)
+      publications.remove(topic_filter)
+      if last_len != len(publications):
+         return self.MQTTAddEventPublications(publications)
+      else:
+         return 'No change'
 
 # -------------------------------------------------------------------------------
 #
