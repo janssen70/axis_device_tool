@@ -1189,7 +1189,7 @@ class VapixClient:
       # First get the MAC
       # raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
       # serial = raw_serial.split('=')[1]
-      print(serial)
+      # print(serial)
       current_config = self.MQTTGetConfig()
       c = current_config['data']['config']
       if c['server']['host'] != broker_addr or \
