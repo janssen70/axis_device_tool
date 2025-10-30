@@ -534,7 +534,7 @@ LIST_FEATUREFLAGS = """
 """
 
 
-_MQTT_REQUEST = """{{
+JSON_REQUEST = """{{
     "apiVersion": "1.0",
     "context": "123",
     "method": "{}",
@@ -542,9 +542,19 @@ _MQTT_REQUEST = """{{
 }}
 """
 
-MQTT_CLIENT_STATUS = _MQTT_REQUEST.format('getClientStatus', '{}')
-MQTT_ACTIVATE_CLIENT = _MQTT_REQUEST.format('activateClient', '{}')
-MQTT_DEACTIVATE_CLIENT = _MQTT_REQUEST.format('deactivateClient', '{}')
+GET_SUPPORTED_VERSIONS = """
+{
+    "context": "123",
+    "method": "getSupportedVersions"
+}
+"""
+
+MQTT_CLIENT_STATUS = JSON_REQUEST.format('getClientStatus', '{}')
+MQTT_ACTIVATE_CLIENT = JSON_REQUEST.format('activateClient', '{}')
+MQTT_DEACTIVATE_CLIENT = JSON_REQUEST.format('deactivateClient', '{}')
+
+MD_LIST_PRODUCERS = JSON_REQUEST.format('listProducers', '{}')
+MD_GET_SUPPORTED_METADATA = JSON_REQUEST.format('getSupportedMetadata', '{}')
 
 class VapixClient:
    """
@@ -1165,6 +1175,31 @@ class VapixClient:
       return self._simple_vapix_call(f'/axis-cgi/io/output.cgi?action={output}:/{duration}\\')
 
    #----------------------------------------------------------------------------
+   # Analytics Metadata                                                     {{{2
+   #----------------------------------------------------------------------------
+
+   def ListProducers(self):
+      return json.dumps(self._json_vapix_call(
+         '/axis-cgi/analyticsmetadataconfig.cgi',
+         MD_LIST_PRODUCERS
+      ))
+
+   def GetSupportedMetadata(self):
+      response = self._json_vapix_call('/axis-cgi/analyticsmetadataconfig.cgi', MD_GET_SUPPORTED_METADATA)
+      for example in response.get('data', {}).get('producers', []):
+         print(f'\n{example["name"]}:')
+         xml = ET.fromstring(example['sampleFrameXML'])
+         xml_indent(xml)
+         ET.dump(xml)
+      return 'done'
+
+   def GetSupportedVersions(self):
+      return json.dumps(self._json_vapix_call(
+         '/axis-cgi/analyticsmetadataconfig.cgi',
+         GET_SUPPORTED_VERSIONS
+      ))
+
+   #----------------------------------------------------------------------------
    # MQTT Setup                                                             {{{2
    #----------------------------------------------------------------------------
 
@@ -1202,7 +1237,7 @@ class VapixClient:
          c['server']['protocol'] = 'tcp'
          c['username'] = broker_usr
          c['password'] = broker_passwd
-         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', _MQTT_REQUEST.format('configureClient', json.dumps(c)))
+         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('configureClient', json.dumps(c)))
          return self.MQTTActivate()
       return 'No change'
 
