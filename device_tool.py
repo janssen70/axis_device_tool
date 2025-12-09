@@ -52,6 +52,7 @@ import pprint
 import configparser
 
 import collections.abc
+from abc import ABC, abstractmethod
 
 import http.cookiejar
 import http.client
@@ -500,13 +501,24 @@ REMOVE_ACTION_CONFIGURATION = GenericRemoveEnvelope.format('RemoveActionConfigur
 REMOVE_ACTION_RULE = GenericRemoveEnvelope.format('RemoveActionRule', 'RuleID', '{}')
 REMOVE_RECIPIENT_CONFIGURATION = GenericRemoveEnvelope.format('RemoveRecipientConfiguration', 'ConfigurationID', '{}')
 
-class Condition:
+class TopicFilter(ABC):
    def __init__(self, topic, content_filter):
       self.topic = topic
       self.content_filter = content_filter
 
+   @abstractmethod
+   def serialize(self):
+      pass
+
+class Condition(TopicFilter):
+
    def serialize(self):
       return GenericCondition.format(self.topic, self.content_filter)
+
+class StartEvent(TopicFilter):
+
+   def serialize(self):
+      return GenericStartEvent.format(self.topic, self.content_filter)
 
 class ConditionList:
    def __init__(self):
@@ -575,6 +587,28 @@ SET_CUSTOM_HEADER = """{{
     "{}": "{}"
   }}
 }}"""
+
+JSON_REQUEST = """{{
+    "apiVersion": "1.0",
+    "context": "123",
+    "method": "{}",
+    "params": {}
+}}
+"""
+
+GET_SUPPORTED_VERSIONS = """
+{
+    "context": "123",
+    "method": "getSupportedVersions"
+}
+"""
+
+MQTT_CLIENT_STATUS = JSON_REQUEST.format('getClientStatus', '{}')
+MQTT_ACTIVATE_CLIENT = JSON_REQUEST.format('activateClient', '{}')
+MQTT_DEACTIVATE_CLIENT = JSON_REQUEST.format('deactivateClient', '{}')
+
+MD_LIST_PRODUCERS = JSON_REQUEST.format('listProducers', '{}')
+MD_GET_SUPPORTED_METADATA = JSON_REQUEST.format('getSupportedMetadata', '{}')
 
 class VapixClient:
    """
@@ -680,8 +714,10 @@ class VapixClient:
          self._simple_vapix_call(
             url,
             data,
-            extra_headers={'Content-Type': 'application/json',
-                'Accept-Encoding': 'application/json'}
+            extra_headers = {
+               'Content-Type': 'application/json',
+               'Accept-Encoding': 'application/json'
+            }
          ).decode('utf-8')
       )
 
@@ -901,6 +937,26 @@ class VapixClient:
          return f'File not found: {filename}'
 
    # ----------------------------------------------------------------------------
+   # I/O                                                                     {{{3
+   # ----------------------------------------------------------------------------
+
+   def VirtualIOOn(self, port = 1):
+      """
+      Call: VirtualIOOn(output=virtual port number)
+
+      Set a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/activate.cgi?schemaversion=1&port={port}')
+
+   def VirtualIOOff(self, port = 1):
+      """
+      Call: VirtualIOOff(output=virtual port number)
+
+      Reset a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/deactivate.cgi?schemaversion=1&port={port}')
+
+   # ----------------------------------------------------------------------------
    # Event Information                                                      {{{2
    # ----------------------------------------------------------------------------
 
@@ -979,14 +1035,14 @@ class VapixClient:
       """
       return self._simple_vapix_webservice_call(ListSchedulesXml)
 
-   def AddSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
+   def AddOrReplaceSchedule(self, name = 'TEST', event_id = None, ical_spec = 'DTSTART:19700101T080000\nDTEND:19700101T150000\nRRULE:FREQ=WEEKLY;BYDAY=TU,WE,TH'):
       """
       Add a schedule by first checking for existence of a schedule with the
       same name, if it exists delete it. Then add the schedule
       """
-      return self.AddSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
+      return self.AddOrReplaceSchedules([{'name': name, 'event_id': event_id, 'ical_spec': ical_spec}])
 
-   def AddSchedules(self, schedule_specifications : list):
+   def AddOrReplaceSchedules(self, schedule_specifications : list):
       """
       Addition of multiple schedules. It starts with a single listing of existing
       schedules up-front to determine which ones to delete by name, and get to
@@ -994,10 +1050,8 @@ class VapixClient:
       fact recreating it.
       """
       def name_to_id(envelope, name):
-         parent = envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)
-         for schedule in list(parent):
-            ev_name = schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)
-            if ev_name is not None:
+         for schedule in list(envelope.find('SOAP-ENV:Body/aev:GetScheduledEventsResponse/aev:ScheduledEvents', MINIMAL_VAPIX_NAMESPACES)):
+            if (ev_name := schedule.find('aev:Name', MINIMAL_VAPIX_NAMESPACES)) is not None:
                if name == ev_name.text:
                   event_id = schedule.find('aev:EventID', MINIMAL_VAPIX_NAMESPACES)
                   return None if event_id is None else event_id.text
@@ -1165,6 +1219,176 @@ class VapixClient:
                done = True
       return done
 
+   #----------------------------------------------------------------------------
+   # Input/Output, Digital I/O                                              {{{2
+   #----------------------------------------------------------------------------
+
+   def IOOn(self, output = 1):
+      """
+      Call: IOOn( output=output number )
+
+      Set an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/port.cgi?action={output}%3A%2F')
+
+   def IOOff(self, output = 1):
+      """
+      Call: IOOn( output=output number )
+
+      Reset an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/port.cgi?action={output}%3A%5C')
+
+   def VirtualIOOn(self, port = 1):
+      """
+      Call: VirtualIOOn(output=virtual port number)
+
+      Set a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/activate.cgi?schemaversion=1&port={port}')
+
+   def VirtualIOOff(self, port = 1):
+      """
+      Call: VirtualIOOff(output=virtual port number)
+
+      Reset a virtualinput
+      """
+      return self._simple_vapix_call(f'/axis-cgi/virtualinput/deactivate.cgi?schemaversion=1&port={port}')
+
+   def ManualTriggerOn(self):
+      """
+      Call: ManualTriggerOn
+
+      Switch on the manual trigger
+      """
+      return self._simple_vapix_call('/axis-cgi/io/virtualinput.cgi?action=6%3A%2F')
+
+   def ManualTriggerOff(self):
+      """
+      Call: ManualTriggerOff
+
+      Switch off the manual trigger
+      """
+      return self._simple_vapix_call('/axis-cgi/io/virtualinput.cgi?action=6%3A%5C')
+
+
+   def IOPulse(self, output = 1, duration = 1000):
+      """
+      Call: IOPulse( output=output number, duration=milliseconds
+
+      Enable, wait, disable for an output pin
+      """
+      return self._simple_vapix_call(f'/axis-cgi/io/output.cgi?action={output}:/{duration}\\')
+
+   #----------------------------------------------------------------------------
+   # Analytics Metadata                                                     {{{2
+   #----------------------------------------------------------------------------
+
+   def ListProducers(self):
+      return json.dumps(self._json_vapix_call(
+         '/axis-cgi/analyticsmetadataconfig.cgi',
+         MD_LIST_PRODUCERS
+      ))
+
+   def GetSupportedMetadata(self):
+      response = self._json_vapix_call('/axis-cgi/analyticsmetadataconfig.cgi', MD_GET_SUPPORTED_METADATA)
+      for example in response.get('data', {}).get('producers', []):
+         print(f'\n{example["name"]}:')
+         xml = ET.fromstring(example['sampleFrameXML'])
+         xml_indent(xml)
+         ET.dump(xml)
+      return 'done'
+
+   def GetSupportedVersions(self):
+      return json.dumps(self._json_vapix_call(
+         '/axis-cgi/analyticsmetadataconfig.cgi',
+         GET_SUPPORTED_VERSIONS
+      ))
+
+   #----------------------------------------------------------------------------
+   # MQTT Setup                                                             {{{2
+   #----------------------------------------------------------------------------
+
+   def MQTTActivate(self):
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_ACTIVATE_CLIENT)
+
+   def MQTTDeactivate(self):
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_DEACTIVATE_CLIENT)
+
+   def MQTTGetConfig(self):
+      """
+      Returns current broker configuration
+      """
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_CLIENT_STATUS)
+
+   def MQTTConfig(self, broker_usr = '', broker_passwd = '', broker_addr = '192.168.2.95',  broker_port = 1883):
+      """
+      Configure the MQTT Client on a device with a simple TCP based
+      broker-connection. It takes care to not reconfigure if the settings are
+      already in place
+      """
+      # First get the MAC
+      # raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
+      # serial = raw_serial.split('=')[1]
+      # print(serial)
+      current_config = self.MQTTGetConfig()
+      c = current_config['data']['config']
+      if c['server']['host'] != broker_addr or \
+         c['server']['port'] != broker_port or \
+         c.get('username', '') != broker_usr or \
+         c.get('password', '') != broker_passwd:
+
+         c['server']['host'] = broker_addr
+         c['server']['port'] = broker_port
+         c['server']['protocol'] = 'tcp'
+         c['username'] = broker_usr
+         c['password'] = broker_passwd
+         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('configureClient', json.dumps(c)))
+         return self.MQTTActivate()
+      return 'No change'
+
+   def MQTTRemoveEventPublications(self):
+      return self.MQTTAddEventPublications([])
+
+   def MQTTGetEventPublications(self):
+      """
+      Get the current event publications
+      """
+      response = self._json_vapix_call('/axis-cgi/mqtt/event.cgi', '{"apiVersion":"1.1","method":"getEventPublicationConfig"}')
+      return [r['topicFilter'] for r in response['data']['eventPublicationConfig']['eventFilterList']]
+
+   def MQTTAddEventPublications(self, topic_filter_list : list[str]):
+      publications_request = {
+         "apiVersion": "1.1",
+         "method": "configureEventPublication",
+         "params": {
+            "topicPrefix": "default",
+            "customTopicPrefix": "",
+            "appendEventTopic": True,
+            "includeSerialNumberInPayload": False,
+            "includeTopicNamespaces":True,
+            "eventFilterList": [{"topicFilter": t,"qos":0,"retain":"none"} for t in topic_filter_list]
+         }
+      }
+      return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', json.dumps(publications_request))
+
+   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
+      publications = self.MQTTGetEventPublications()
+      if topic_filter not in publications:
+         publications.append(topic_filter)
+         return self.MQTTAddEventPublications(publications)
+      else:
+         return 'No change'
+
+   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
+      publications = self.MQTTGetEventPublications()
+      last_len = len(publications)
+      publications.remove(topic_filter)
+      if last_len != len(publications):
+         return self.MQTTAddEventPublications(publications)
+      else:
+         return 'No change'
+
 # -------------------------------------------------------------------------------
 #
 #   Other                                                                   {{{1
@@ -1176,57 +1400,90 @@ class MyUsecases(VapixClient):
    Non-generic calls which don't make sense to include in base VapixClient
    """
 
-   def ActionRuleTest(self):
+   def _add_action_rule(self, actionrule_name, schedule_id_a, schedule_id_b, start_event, play_clip_name, use_virtual_input: bool = False):
       """
-      Configure two rules to Play audio clip when Call button pressed (or input 0
-      toggles) when two schedules are not active. Inspired by a specific troubleshoot
+      Implements the core logic for the ActionRuleTest_* functions
+      """
+      # Note! Older Axis OS expects audioclip with path, later ones without path?
+      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
+      if (config := envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)) is not None:
+
+         conditions = ConditionList()
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         conditions.add(
+            topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+            content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
+         )
+         if use_virtual_input:
+            # Combine with a virtual input (to try silence the event on
+            # schedule-modifications)
+            conditions.add(
+               topic = 'tns1:Device/tnsaxis:IO/VirtualInput',
+               content_filter = 'boolean(//SimpleItem[@Name="port" and @Value="9"]) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
+            )
+         req = GenericActionRule.format(
+            actionrule_name,
+            start_event.serialize(),
+            conditions.serialize(),
+            config.text
+         )
+         envelope = self._simple_vapix_webservice_call(req)
+         config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if config is not None:
+            return config.text
+      return None
+
+   def ActionRuleTest(self, start_event):
+      """
+      Configure two rules to Play audio clip triggered by 'start_event', when
+      when two schedules are not active. Inspired by a specific troubleshoot
       but usefull as general example for configuring event rules.
 
-      This one assumes you first delete the actionrule, then call this
-      function to create a new one
+      Pre: start with clean (empty) eventrule configuration
       """
-      def add_action_rule(actionrule_name, schedule_id_a, schedule_id_b, play_clip_name):
-         # Note! Older Axis OS expects audioclip with path, later ones without path
-         envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', play_clip_name, location = '/etc/audioclips/camera_clicks16k.au'))
-         config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
-         if config is not None:
-
-            conditions = ConditionList()
-            conditions.add(
-               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_a}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-            )
-            conditions.add(
-               topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
-               content_filter = f'boolean(//SimpleItem[@Name="id" and @Value="{schedule_id_b}"]) and boolean(//SimpleItem[@Name="active" and @Value="0"])'
-            )
-            req = GenericActionRule.format(
-               actionrule_name,
-               GenericStartEvent.format('tns1:Device/tnsaxis:IO/Port','boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'),
-               conditions.serialize(),
-               config.text
-            )
-            envelope = self._simple_vapix_webservice_call(req)
-            config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
-            if config is not None:
-               return config.text
-         return None
-
       schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddOrModifySchedules1()
 
+
       ids = [
-         add_action_rule('Play a clip 1', schedule_id1, schedule_id2, 'Play my clip 1'),
-         add_action_rule('Play a clip 2', schedule_id3, schedule_id4, 'Play my clip 2')
+         self._add_action_rule('Play a clip 1', schedule_id1, schedule_id2, start_event, 'Play my clip 1'),
+         self._add_action_rule('Play a clip 2', schedule_id3, schedule_id4, start_event, 'Play my clip 2')
       ]
 
       return ids
 
+   def ActionRuleTest_byCallButton(self):
+      """
+      Configure the rule with Call button pressed (= input 0 toggles) as start
+      event
+      """
+      start_event = StartEvent(
+         'tns1:Device/tnsaxis:IO/Port',
+         'boolean(//SimpleItem[@Name="port" and @Value="0"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'
+      )
+      return self.ActionRuleTest(start_event)
+
+   def ActionRuleTest_byManualTrigger(self):
+      """
+      Configure the rule with Manual Trigger pressed as start event
+
+      Seems a bit of an oddity that we need to listen to port 1 while we need
+      to set virtual port 6 to trigger it
+      """
+      start_event = StartEvent(
+         'tns1:Device/tnsaxis:IO/VirtualPort',
+         'boolean(//SimpleItem[@Name="port" and @Value="1"]) and boolean(//SimpleItem[@Name="state" and @Value="1"])'
+      )
+      return self.ActionRuleTest(start_event)
+
    def AddOrModifySchedules1(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # 801
@@ -1239,10 +1496,10 @@ class MyUsecases(VapixClient):
 
    def AddOrModifySchedules2(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # Weekdays
@@ -1255,10 +1512,10 @@ class MyUsecases(VapixClient):
 
    def AddOrModifySchedules3(self):
       """
-      Redefines the schedule in use by the action-rule created by
-      ActionRuleTest
+      (Re-)defines the schedule in use by the action-rule created by
+      ActionRuleTest()
       """
-      return self.AddSchedules([
+      return self.AddOrReplaceSchedules([
          # 800
          {'name': 'My Schedule 1', 'event_id': None, 'ical_spec': 'DTSTART:19700101T000000\nDTEND:19700101T080000\nRRULE:FREQ=WEEKLY;BYDAY=FR'},
          # Weekends

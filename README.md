@@ -41,6 +41,7 @@ Requires Python 3.8+. Some examples:
   ```bash
   python3 device_tool.py -f "UploadAcap(filename=youracap_0_8_5_armv7hf.eap)" -f ListAcaps -f "StartAcap(package=youracap)" -f "Wait(seconds=120)" -f "RemoveAcap(package=youracap)" -f ListAcaps
   ```
+Furthermore the -r option is usefull to see the flow of formatted data, especially for requests to ```/vapix/services```.
 
 Supported operations
 --------------------
