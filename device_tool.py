@@ -361,6 +361,44 @@ ListSchedulesXml = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 #-------------------------------------------------------------------------------
+# Recipients                                                                {{{2
+#-------------------------------------------------------------------------------
+
+GenericRecipientConfiguration = """<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:act="http://www.axis.com/vapix/ws/action1" xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+  <soap:Body>
+	<act:AddRecipientConfiguration xmlns="http://www.axis.com/vapix/ws/action1">
+	  <NewRecipientConfiguration>
+		<TemplateToken>{}</TemplateToken>
+		<Name>{}</Name>
+		<Parameters>
+          {}
+		</Parameters>
+	  </NewRecipientConfiguration>
+	</act:AddRecipientConfiguration>
+  </soap:Body>
+</soap:Envelope>
+"""
+
+# This info can be requested from the camera as well, but that doesn't really
+# scale when configuring a lot of devices
+
+RecipientDefinitions = {
+  'com.axis.recipient.tcp':  {'host': '', 'port': '', 'qos': '0'},
+  'com.axis.recipient.http': {'upload_url': '', 'login': '', 'password': '', 'qos': '0', 'proxy_host': '', 'proxy_port': '', 'proxy_login': '', 'proxy_password': ''},
+  'com.axis.recipient.https': {'upload_url': '', 'login': '', 'password': '', 'qos': '0', 'proxy_host': '', 'proxy_port': '', 'proxy_login': '', 'proxy_password': '', 'validate_server_cert': '1'}
+}
+
+def MakeRecipientConfiguration(token, name, **kwargs):
+   if token in RecipientDefinitions:
+      params = []
+      for key in RecipientDefinitions[token].keys():
+         value = kwargs.get(key, RecipientDefinitions[token][key])
+         params.append('<Parameter Name="{}" Value="{}"></Parameter>'.format(key, value))
+      return GenericRecipientConfiguration.format(token, name, '\n'.join(params))
+   return None
+
+#-------------------------------------------------------------------------------
 # ActionConfiguration and -Rules                                            {{{2
 #-------------------------------------------------------------------------------
 
@@ -409,6 +447,10 @@ ActionDefinitions = {
      'recipient_token': 'com.axis.recipient.http',
      'params': {'parameters': '', 'message': ''}
   },
+  'com.axis.action.fixed.notification.https': {
+     'recipient_token': 'com.axis.recipient.https',
+     'params': {'parameters': '', 'message': ''}
+  },
   'com.axis.action.fixed.play.audioclip': {
      'recipient_token': None,
      'params': {
@@ -449,10 +491,14 @@ GenericRemoveEnvelope = """<?xml version="1.0" encoding="utf-8"?>
 </soap:Envelope>
 """
 
+GET_RECIPIENT_TEMPLATES = GenericActionEnvelope.format('GetRecipientTemplates')
+GET_RECIPIENT_CONFIGURATIONS = GenericActionEnvelope.format('GetRecipientConfigurations')
 GET_ACTION_RULES = GenericActionEnvelope.format('GetActionRules')
 GET_ACTION_CONFIGURATIONS = GenericActionEnvelope.format('GetActionConfigurations')
+
 REMOVE_ACTION_CONFIGURATION = GenericRemoveEnvelope.format('RemoveActionConfiguration', 'ConfigurationID', '{}')
 REMOVE_ACTION_RULE = GenericRemoveEnvelope.format('RemoveActionRule', 'RuleID', '{}')
+REMOVE_RECIPIENT_CONFIGURATION = GenericRemoveEnvelope.format('RemoveRecipientConfiguration', 'ConfigurationID', '{}')
 
 class Condition:
    def __init__(self, topic, content_filter):
@@ -485,11 +531,11 @@ def MakeActionConfiguration(token, name, **kwargs):
       params = []
       for key, default_val in ActionDefinitions[token]['params'].items():
          params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key,  default_val)))
-#      if recipient_token is not None:
-#         if recipient_token not in RecipientDefinitions:
-#            return None
-#         for key, default_val in RecipientDefinitions[recipient_token].items():
-#            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
+      if recipient_token is not None:
+         if recipient_token not in RecipientDefinitions:
+            return None
+         for key, default_val in RecipientDefinitions[recipient_token].items():
+            params.append('<act:Parameter Name="{}" Value="{}"/>'.format(key, kwargs.get(key, default_val)))
       return GenericActionConfiguration.format(name, token, '\n'.join(params))
    print(f'Error: no action-template for {token}')
    return None
@@ -520,6 +566,15 @@ LIST_FEATUREFLAGS = """
   "method": "listAll"
 }
 """
+
+SET_CUSTOM_HEADER = """{{
+  "apiVersion": "1.0",
+  "context": "OptionalContext",
+  "method": "set",
+  "params": {{
+    "{}": "{}"
+  }}
+}}"""
 
 class VapixClient:
    """
@@ -703,6 +758,17 @@ class VapixClient:
       Call: Reboot
       """
       return self._simple_vapix_call('/axis-cgi/restart.cgi').decode('utf-8')
+
+   def CustomHeader(self, header: str = 'Access-Control-Allow-Origin', value: str = '*') -> str:
+      """
+      Call: CustomHeader(header=<str>,value=<str>)
+
+      Device needs reboot for the setting to have effect
+      """
+      return self._simple_vapix_call(
+         '/axis-cgi/customhttpheader.cgi',
+         SET_CUSTOM_HEADER.format(header, value)
+      ).decode('utf-8')
 
    def Wait(self, seconds=60) -> str:
       """
@@ -965,6 +1031,47 @@ class VapixClient:
       return 'Failure' if success is None else 'Success'
 
    # ----------------------------------------------------------------------------
+   # Recipients                                                              {{{3
+   # ----------------------------------------------------------------------------
+
+   # Recipients are a web GUI concept, you can configure action rules without
+   # creating recipients on the device first
+
+   def AddTCPRecipient(self, name, host, port, qos = 0):
+      """
+      Call: AddTCPRecipient(name,host,port,[qos])
+
+      Add a TCP recipient to the event configuration
+      """
+      req = MakeRecipientConfiguration('com.axis.recipient.tcp', name, host=host, port=port, qos=qos)
+      envelope = self._simple_vapix_webservice_call( req )
+      return envelope.find('SOAP-ENV:Body/act:AddRecipientConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES).text
+
+   def AddHTTPRecipient( self, name, url, usr='', passwd=''):
+      """
+      Call: AddHTTPRecipient(name,url,usr,passwd)
+
+      Add a HTTP recipient to the event configuration
+      """
+      req = MakeRecipientConfiguration('com.axis.recipient.http', name, upload_url = url, login = usr, password = passwd)
+      envelope = self._simple_vapix_webservice_call( req )
+      return envelope.find('SOAP-ENV:Body/act:AddRecipientConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES).text
+
+   def GetRecipientConfigurations(self):
+      """
+      Call: GetRecipientConfigurations
+
+      (use -r)
+      """
+      self._simple_vapix_webservice_call( GET_RECIPIENT_CONFIGURATIONS )
+
+   def RemoveRecipientConfiguration(self, recipient_id):
+      """
+      Call: RemoveRecipientConfiguration(recipient_id)
+      """
+      self._simple_vapix_webservice_call(REMOVE_RECIPIENT_CONFIGURATION.format(recipient_id))
+
+   # ----------------------------------------------------------------------------
    # ActionConfigurations                                                    {{{3
    # ----------------------------------------------------------------------------
 
@@ -1161,6 +1268,58 @@ class MyUsecases(VapixClient):
          # After hours
          {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T180000\nDTEND:19700102T080000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
       ])
+
+   def SetupSytemReadyMessage(self, name, recipient_name, url, usr='', passwd='', message='', parameters = ''):
+      """
+      Add Event Rule for sending out a HTTP notification on SystemReady
+
+      - Create event action
+      - Find the id of the new event action in the response
+      - Create event rule with the trigger condition, pointing to the action
+        id
+      """
+      envelope = self._simple_vapix_webservice_call(
+         MakeActionConfiguration(
+            'com.axis.action.fixed.notification.https',
+            recipient_name,
+            upload_url = url,
+            login = usr,
+            password = passwd,
+            message = message,
+            parameters = parameters
+         )
+      )
+      config = envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)
+      if config != None:
+         action_config_id = config.text
+         conditions = ConditionList()
+         conditions.add(
+            topic = 'tns1:Device/tnsaxis:Status/SystemReady',
+            content_filter = 'boolean(//SimpleItem[@Name="ready" and @Value="1"])'
+         )
+         req = GenericActionRule.format(
+            name,
+            '',
+            conditions.serialize(),
+            action_config_id
+         )
+
+         envelope = self._simple_vapix_webservice_call( req )
+         config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+         if config != None:
+            return config.text
+      return None
+
+   def MySystemReady(self):
+      return self.SetupSytemReadyMessage(
+         name = 'System is up',
+         recipient_name = 'self',
+         url = 'https://127.0.1.1/axis-cgi/virtualinput/activate.cgi',
+         usr = 'root',
+         passwd = 'pass',
+         message = 'test',
+         parameters = 'schemaversion=1&amp;port=11'
+      )
 
 # -------------------------------------------------------------------------------
 #
