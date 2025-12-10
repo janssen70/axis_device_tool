@@ -65,6 +65,21 @@ Supported operations
 | StartAcap | |
 | StopAcap | |
 | UploadAcap | |
+| IOOn | Set an output pin |
+| IOOff | Reset an output pin |
+| VirtualIOOn | Set a virtual input |
+| VirtualIOOff | Reset a virtual input |
+| ManualTriggerOn | Set the manual trigger |
+| ManualTriggerOff | Reset the manual trigger |
+| IOPulse | Set, wait, reset an output pin |
+| MQTTActivate | Enable the MQTT client |
+| MQTTDectivate | Disable the MQTT client |
+| MQTTConfig | Configure the MQTT client |
+| MQTTGetConfig | Retrieve the MQTT client configuration |
+| MQTTGetEventPublications | Retrieve the MQTT event publications |
+| MQTTRemoveEventPublications | Remove all MQTT event publications |
+| MQTTAddEventPublications | Configure a new list of MQTT event publications |
+| MQTTAddEventPublication | Add a single MQTT event publications |
 | Wait | Inserts a delay, usefull when executing a series of functions |
 
 

@@ -1326,6 +1326,8 @@ class VapixClient:
       Configure the MQTT Client on a device with a simple TCP based
       broker-connection. It takes care to not reconfigure if the settings are
       already in place
+
+      Note: password will always be a mismatch :(
       """
       # First get the MAC
       # raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
@@ -1355,7 +1357,7 @@ class VapixClient:
       Get the current event publications
       """
       response = self._json_vapix_call('/axis-cgi/mqtt/event.cgi', '{"apiVersion":"1.1","method":"getEventPublicationConfig"}')
-      return [r['topicFilter'] for r in response['data']['eventPublicationConfig']['eventFilterList']]
+      return response['data']['eventPublicationConfig']['eventFilterList']
 
    def MQTTAddEventPublications(self, topic_filter_list : list[str]):
       publications_request = {
@@ -1367,24 +1369,15 @@ class VapixClient:
             "appendEventTopic": True,
             "includeSerialNumberInPayload": False,
             "includeTopicNamespaces":True,
-            "eventFilterList": [{"topicFilter": t,"qos":0,"retain":"none"} for t in topic_filter_list]
+            "eventFilterList": topic_filter_list
          }
       }
       return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', json.dumps(publications_request))
 
-   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
+   def MQTTAddEventPublication(self, topic_filter : str = 'onvif:AudioSource/axis:TriggerLevel', retain : str = 'none', qos : int = 0):
       publications = self.MQTTGetEventPublications()
       if topic_filter not in publications:
-         publications.append(topic_filter)
-         return self.MQTTAddEventPublications(publications)
-      else:
-         return 'No change'
-
-   def MQTTAddEventPublication(self, topic_filter = 'onvif:AudioSource/axis:TriggerLevel'):
-      publications = self.MQTTGetEventPublications()
-      last_len = len(publications)
-      publications.remove(topic_filter)
-      if last_len != len(publications):
+         publications.append({'topicFilter': topic_filter, 'retain': retain, 'qos': qos})
          return self.MQTTAddEventPublications(publications)
       else:
          return 'No change'
