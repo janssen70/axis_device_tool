@@ -1480,7 +1480,7 @@ class VapixClient:
          JSON_REQUEST.format(
             '1.15',
             'setWired8021XConfiguration',
-            '{{"deviceName":"eth0","eapolVersion":"EAPoLv2","enabled":true,"identity":"{}","mode":"WPA-Enterprise-EAPTLS"}}'.format(dotx_conf['serial'])
+            '{{"deviceName":"eth0","eapolVersion":"EAPoLv2","enabled":true,"identity":"{}","mode":"WPA-Enterprise-EAPTLS"}}'.format(config['serial'])
          )
       )
 
@@ -1515,6 +1515,8 @@ class VapixClient:
       }
       if cacert2name:
          dot1x_conf['ca_certs'].append(cacert2name)
+
+      # TODO: Check validity of the cert names
 
       return self._set_dot1x_config(dot1x_conf)
 
@@ -1578,7 +1580,7 @@ class VapixClient:
       devices have a Decaf API:
       http://192.168.200.13/config/rest/cert/v1/ca_certificates/,cert_id>
       """
-      return self._simple_vapix_webservice_call(DeleteCertificate.format(cert_name))
+      return self._simple_vapix_webservice_call(DeleteCertificateXml.format(cert_name))
 
    def LoadCACertificate(self, filename):
       """
