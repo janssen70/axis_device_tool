@@ -41,7 +41,7 @@ Requires Python 3.8+. Some examples:
   ```bash
   python3 device_tool.py -f "UploadAcap(filename=youracap_0_8_5_armv7hf.eap)" -f ListAcaps -f "StartAcap(package=youracap)" -f "Wait(seconds=120)" -f "RemoveAcap(package=youracap)" -f ListAcaps
   ```
-Furthermore the -r option is usefull to see the flow of formatted data, especially for requests to ```/vapix/services```.
+Furthermore the -r option is usefull to see nicely formatted flow of data, especially for requests to ```/vapix/services```.
 
 Supported operations
 --------------------
@@ -73,13 +73,20 @@ Supported operations
 | ManualTriggerOff | Reset the manual trigger |
 | IOPulse | Set, wait, reset an output pin |
 | MQTTActivate | Enable the MQTT client |
-| MQTTDectivate | Disable the MQTT client |
+| MQTTDectivate | Disable the MQTT client !}!B<Mouse>C!}!@<Mouse>C!~!>
 | MQTTConfig | Configure the MQTT client |
 | MQTTGetConfig | Retrieve the MQTT client configuration |
 | MQTTGetEventPublications | Retrieve the MQTT event publications |
 | MQTTRemoveEventPublications | Remove all MQTT event publications |
 | MQTTAddEventPublications | Configure a new list of MQTT event publications |
 | MQTTAddEventPublication | Add a single MQTT event publications |
+| GetDot1XConfiguration | Returns the IEEE 802.1X configuration |
+| SetDot1XConfiguration | Sets the IEEE 802.1X configuration |
+| AddDot1XCACertName | Adds a certificate for RADIUS server cert verification |
+| RemoveDot1XCACertName | Removes a certificate for RADIUS server cert verification |
+| GetCACertificates | Returns the list of installed CA certificates |
+| DeleteCertificate | Removes a certificate from the device |
+| LoadCACertificate | Loads a CA certificate to the device |
 | Wait | Inserts a delay, usefull when executing a series of functions |
 
 
