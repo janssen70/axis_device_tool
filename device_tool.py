@@ -568,7 +568,9 @@ MINIMAL_VAPIX_NAMESPACES = {
    'tns1': 'http://www.onvif.org/ver10/topics',
    'tnsaxis': 'http://www.axis.com/2009/event/topics',
    'act': 'http://www.axis.com/vapix/ws/action1',
-   'entry': 'http://www.axis.com/vapix/ws/entry'
+   'entry': 'http://www.axis.com/vapix/ws/entry',
+   'tds': 'http://www.onvif.org/ver10/device/wsdl',
+   'tt': 'http://www.onvif.org/ver10/schema'
 }
 
 LIST_FEATUREFLAGS = """
@@ -589,7 +591,7 @@ SET_CUSTOM_HEADER = """{{
 }}"""
 
 JSON_REQUEST = """{{
-    "apiVersion": "1.0",
+    "apiVersion": "{}",
     "context": "123",
     "method": "{}",
     "params": {}
@@ -603,12 +605,78 @@ GET_SUPPORTED_VERSIONS = """
 }
 """
 
-MQTT_CLIENT_STATUS = JSON_REQUEST.format('getClientStatus', '{}')
-MQTT_ACTIVATE_CLIENT = JSON_REQUEST.format('activateClient', '{}')
-MQTT_DEACTIVATE_CLIENT = JSON_REQUEST.format('deactivateClient', '{}')
+MQTT_CLIENT_STATUS = JSON_REQUEST.format('1.0', 'getClientStatus', '{}')
+MQTT_ACTIVATE_CLIENT = JSON_REQUEST.format('1.0', 'activateClient', '{}')
+MQTT_DEACTIVATE_CLIENT = JSON_REQUEST.format('1.0', 'deactivateClient', '{}')
 
-MD_LIST_PRODUCERS = JSON_REQUEST.format('listProducers', '{}')
-MD_GET_SUPPORTED_METADATA = JSON_REQUEST.format('getSupportedMetadata', '{}')
+MD_LIST_PRODUCERS = JSON_REQUEST.format('1.0', 'listProducers', '{}')
+MD_GET_SUPPORTED_METADATA = JSON_REQUEST.format('1.0', 'getSupportedMetadata', '{}')
+
+
+GetDot1XConfigXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+    <GetDot1XConfiguration xmlns="http://www.onvif.org/ver10/device/wsdl"><Dot1XConfigurationToken>{token}</Dot1XConfigurationToken></GetDot1XConfiguration>
+ </Body>
+</Envelope>
+"""
+
+SetDot1XConfigXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+   <SetDot1XConfiguration xmlns="http://www.onvif.org/ver10/device/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+     <Dot1XConfiguration>
+       <tt:Dot1XConfigurationToken>{token}</tt:Dot1XConfigurationToken>
+       <tt:Identity>{mac}</tt:Identity>
+       <tt:EAPMethod>{method}</tt:EAPMethod>
+       <tt:EAPMethodConfiguration>
+           <tt:TLSConfiguration>
+             <tt:CertificateID>{certname}</tt:CertificateID>
+           </tt:TLSConfiguration>
+       </tt:EAPMethodConfiguration>
+       {cacert_spec}
+     </Dot1XConfiguration>
+   </SetDot1XConfiguration>
+ </Body>
+</Envelope>
+"""
+
+GetCACertificatesXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+<GetCACertificates xmlns="http://www.onvif.org/ver10/device/wsdl"></GetCACertificates>
+ </Body>
+</Envelope>
+"""
+
+DeleteCertificateXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+<DeleteCertificates xmlns="http://www.onvif.org/ver10/device/wsdl"><CertificateID>{}</CertificateID></DeleteCertificates>
+ </Body>
+</Envelope>
+"""
+
+LoadCACertificatesXml = """<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope">
+ <Header/>
+ <Body >
+   <LoadCACertificates xmlns="http://www.onvif.org/ver10/device/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+     <CACertificate>
+       <tt:CertificateID>202512_testroom_RADIUS_2_CA</tt:CertificateID>
+       <tt:Certificate>
+          <tt:Data>{body}</tt:Data>
+       </tt:Certificate>
+     </CACertificate>
+   </LoadCACertificates>
+ </Body>
+</Envelope>
+"""
+
 
 class VapixClient:
    """
@@ -814,6 +882,14 @@ class VapixClient:
       """
       time.sleep(int(seconds))
       return ''
+
+   # ----------------------------------------------------------------------------
+   # Simple properties                                                      {{{2
+   # ----------------------------------------------------------------------------
+
+   def GetSerialNumber(self):
+      raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
+      return raw_serial.split('=')[1].strip()
 
    # ----------------------------------------------------------------------------
    # Troubleshooting                                                        {{{2
@@ -1327,10 +1403,6 @@ class VapixClient:
       broker-connection. It takes care to not reconfigure if the settings are
       already in place
       """
-      # First get the MAC
-      # raw_serial = self._simple_vapix_call('/axis-cgi/param.cgi?action=list&group=Properties.System.SerialNumber').decode('utf-8')
-      # serial = raw_serial.split('=')[1]
-      # print(serial)
       current_config = self.MQTTGetConfig()
       c = current_config['data']['config']
       if c['server']['host'] != broker_addr or \
@@ -1343,7 +1415,7 @@ class VapixClient:
          c['server']['protocol'] = 'tcp'
          c['username'] = broker_usr
          c['password'] = broker_passwd
-         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('configureClient', json.dumps(c)))
+         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('1.0', 'configureClient', json.dumps(c)))
          return self.MQTTActivate()
       return 'No change'
 
@@ -1388,6 +1460,153 @@ class VapixClient:
          return self.MQTTAddEventPublications(publications)
       else:
          return 'No change'
+
+   #----------------------------------------------------------------------------
+   # IEEE 802.1X                                                            {{{2
+   #----------------------------------------------------------------------------
+
+   def _set_dot1x_config(self, config):
+      """
+      Applies IEEE 802.1x config from internal data structure
+      """
+      CACERTSPEC = '<tt:CACertificateID>{}</tt:CACertificateID>'
+      cacert_spec = ''.join([CACERTSPEC.format(name) for name in config['ca_certs']])
+
+      self._simple_vapix_webservice_call(SetDot1XConfigXml.format(
+         token = 'EAPTLS_WIRED',
+         mac = config['serial'],
+         method = config['eap_method'],
+         certname = config['client_cert'],
+         cacert_spec = cacert_spec
+      ))
+
+      # TODO: check webservice response?
+
+      return self._json_vapix_call(
+         '/axis-cgi/network_settings.cgi',
+         JSON_REQUEST.format(
+            '1.15',
+            'setWired8021XConfiguration',
+            '{{"deviceName":"eth0","eapolVersion":"EAPoLv2","enabled":true,"identity":"{}","mode":"WPA-Enterprise-EAPTLS"}}'.format(dotx_conf['serial'])
+         )
+      )
+
+   def GetDot1XConfiguration(self):
+      """
+      Get the IEEE 802.1x configuration
+      """
+      envelope = self._simple_vapix_webservice_call(GetDot1XConfigXml.format(
+         token = 'EAPTLS_WIRED',
+      ))
+      if (conf := envelope.find('SOAP-ENV:Body/tds:GetDot1XConfigurationResponse/tds:Dot1XConfiguration', MINIMAL_VAPIX_NAMESPACES)) is not None:
+         dotx_conf = {
+            'ca_certs': []
+         }
+         for ca in conf.findall('tt:CACertificateID', MINIMAL_VAPIX_NAMESPACES):
+           dotx_conf['ca_certs'].append(ca.text)
+         dotx_conf['eap_method'] = conf.find('tt:EAPMethod', MINIMAL_VAPIX_NAMESPACES).text
+         dotx_conf['client_cert'] = conf.find('tt:EAPMethodConfiguration/tt:TLSConfiguration/tt:CertificateID', MINIMAL_VAPIX_NAMESPACES).text
+         return dotx_conf
+      return None
+
+   def SetDot1XConfiguration(self, certname = 'X', cacert1name = 'Y', cacert2name = None):
+      """
+      Configure certificate-based port authentication with 1 or 2 certs for
+      evaluating RADIUS server certificate
+      """
+      dot1x_conf = {
+         'ca_certs': [ cacert1name ],
+         'serial': self.GetSerialNumber(),
+         'eap_method': '13',
+         'client_cert': certname
+      }
+      if cacert2name:
+         dot1x_conf['ca_certs'].append(cacert2name)
+
+      return self._set_dot1x_config(dot1x_conf)
+
+   def AddDot1XCACertName(self, cacert_name):
+      """
+      Add another CA Cert for RADIUS server cert verification. This function
+      aids in making no mistakes:
+
+      - It checks for existance of the CA cert with name <cacert_name>
+      - It checks whether the config isn't already using <cacert_name>
+
+      Pre:
+      - The device should already have a valid IEEE 802.1X configuration
+      """
+      cacert_names = self.GetCACertificateNames()
+      dot1x_conf = self.GetDot1XConfiguration()
+
+      if cacert_name not in cacert_names:
+         return f'Failed: No CA certificate present with name {cacert_name}'
+
+      if cacert_name in dot1x_conf['ca_certs']:
+         return f'Failed: CA certificate {cacert_name} is already used for RADIUS verification'
+
+      dot1x_conf['ca_certs'].append(cacert_name)
+      dot1x_conf['serial'] = self.GetSerialNumber()
+      self._set_dot1x_config(dot1x_conf)
+      return 'Done'
+
+   def RemoveDot1XCACertName(self, cacert_name):
+      """
+      Remove <cacert_name> from the list of CA certs for RADIUS verification,
+      as long some other certificate remains
+      """
+      dot1x_conf = self.GetDot1XConfiguration()
+
+      if cacert_name not in dot1x_conf['ca_certs']:
+         return f'Failed: CA certificate {cacert_name} is not used for RADIUS verification'
+
+      if len(dot1x_conf['ca_certs']) <= 1:
+         return f'Failed: No other CA certificate would remain'
+
+      dot1x_conf['ca_certs'].remove(cacert_name)
+      dot1x_conf['serial'] = self.GetSerialNumber()
+      self._set_dot1x_config(dot1x_conf)
+      return 'Done'
+
+   def GetCACertificateNames(self):
+      """
+      Get the certificates and print the names
+      """
+      names = []
+      envelope = self._simple_vapix_webservice_call(GetCACertificatesXml)
+      for cert in list(envelope.find('SOAP-ENV:Body/tds:GetCACertificatesResponse', MINIMAL_VAPIX_NAMESPACES)):
+         if (the_id := cert.find('tt:CertificateID', MINIMAL_VAPIX_NAMESPACES)) is not None:
+            names.append(the_id.text)
+      return names
+
+   def DeleteCertificate(self, cert_name):
+      """
+      Remove a certiticate. This function uses the webservice API, newer
+      devices have a Decaf API:
+      http://192.168.200.13/config/rest/cert/v1/ca_certificates/,cert_id>
+      """
+      return self._simple_vapix_webservice_call(DeleteCertificate.format(cert_name))
+
+   def LoadCACertificate(self, filename):
+      """
+      Load a CA Certificate. The filename without extension is used
+      as Certificate ID
+      """
+      if not os.path.exists(filename):
+         return f'Failed: {filename} not found'
+
+      basename = os.path.basename(filename)
+      title = os.path.splitext(basename)[0]
+
+      with open(filename, 'rt') as f:
+         lines = f.readlines()
+
+      if lines[0] != '-----BEGIN CERTIFICATE-----\n':
+         return f'Failed: {filename} has unexpected content'
+
+      return self._simple_vapix_webservice_call(
+            LoadCACertificatesXml.format(cert_id = title, body = ''.join(lines[1:-1]))
+         )
 
 # -------------------------------------------------------------------------------
 #
