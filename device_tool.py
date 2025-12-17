@@ -144,22 +144,6 @@ class EventtopicDenamespacer(Denamespacer):
          return f'{reverse}:{_tag}'
       return _tag
 
-
-def parse_call(func_call):
-   """
-   This one splits a command-line string into a function-name and keyword
-   arguments list that can be passed to the function implementing
-   'function-name'
-   """
-   part1 = func_call.strip().split('(')
-   kwargs = {}
-   if len(part1) > 1 and len(part1[1]) > 1:
-      args = part1[1][:-1].split(',')
-      for a in args:
-         x = a.split('=', 1)
-         kwargs[x[0]] = x[1]
-   return part1[0], kwargs
-
 # In-place ElementTree prettyprint formatter
 # Credits: http://effbot.oRg/zone/element-lib.htm#prettyprint
 
@@ -217,9 +201,15 @@ class WebAccess:
    dependencies, like requests
    """
 
-   def __init__(self, host: str, temp_dir='.', proxy=None, context=None):
+   def __init__(self,
+         host: str,
+         temp_dir = '.',
+         proxy = None,
+         context = None,
+         secure = False
+      ):
       self.host = host
-      self.site_url = f'http://{host}'
+      self.site_url = f'http{"s" if secure else ""}://{host}'
       self.pwd_mngr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
       self.cj = http.cookiejar.LWPCookieJar()
       self.cookie_file = temp_dir + os.sep + 'cookie.lwp'
@@ -1397,13 +1387,16 @@ class VapixClient:
       """
       return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_CLIENT_STATUS)
 
-   def MQTTConfig(self, broker_usr = '', broker_passwd = '', broker_addr = '192.168.2.95',  broker_port = 1883):
+   def MQTTConfig(self, broker_usr = '', broker_passwd = '', broker_addr = '192.168.2.95', broker_port = 1883, protocol = 'tcp'):
       """
+      Call: MQTTConfig(broker_usr=username,broker_passwd=pwd,broker-addr=address,
+                         broker_port=port,protocol=[udp|tcp|websocket])
+
       Configure the MQTT Client on a device with a simple TCP based
       broker-connection. It takes care to not reconfigure if the settings are
       already in place
 
-      Note: password will always be a mismatch :(
+      Note: password is not returned by device, so always a mismatch :(
       """
       current_config = self.MQTTGetConfig()
       c = current_config['data']['config']
@@ -1433,15 +1426,15 @@ class VapixClient:
 
    def MQTTAddEventPublications(self, topic_filter_list : list[str]):
       publications_request = {
-         "apiVersion": "1.1",
-         "method": "configureEventPublication",
-         "params": {
-            "topicPrefix": "default",
-            "customTopicPrefix": "",
-            "appendEventTopic": True,
-            "includeSerialNumberInPayload": False,
-            "includeTopicNamespaces":True,
-            "eventFilterList": topic_filter_list
+         'apiVersion': '1.1',
+         'method': 'configureEventPublication',
+         'params': {
+            'topicPrefix': 'default',
+            'customTopicPrefix': '',
+            'appendEventTopic': True,
+            'includeSerialNumberInPayload': False,
+            'includeTopicNamespaces':True,
+            'eventFilterList': topic_filter_list
          }
       }
       return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', json.dumps(publications_request))
@@ -1798,6 +1791,36 @@ class MyUsecases(VapixClient):
 #
 # -------------------------------------------------------------------------------
 
+def call_method(f, arguments):
+   """
+   """
+   r = f(**arguments)
+   if isinstance(r, str):
+      print(r)
+   elif isinstance(r, bytes):
+      print(r.decode('utf-8'))
+   elif isinstance(r, ET.Element):
+      xml_indent(r)
+      ET.dump(r)
+      sys.stdout.flush()
+   else:
+      pprint.pprint(r)
+
+def parse_call(func_call):
+   """
+   This one splits a command-line string into a function-name and keyword
+   arguments list that can be passed to the function implementing
+   'function-name'
+   """
+   part1 = func_call.strip().split('(')
+   kwargs = {}
+   if len(part1) > 1 and len(part1[1]) > 1:
+      args = part1[1][:-1].split(',')
+      for a in args:
+         x = a.split('=', 1)
+         kwargs[x[0]] = x[1]
+   return part1[0], kwargs
+
 class Executor:
    """
    A class to assemble the list of functions to call, and runnning the requested sequence
@@ -1845,27 +1868,14 @@ class Executor:
             print(f'Camera = {c}')
          for f in self.args.function:
             name, kwargs = parse_call(f)
-            methodcall = None
             if name in self.tool_list:
                methodcall = getattr(self.clients[c], name)
-            else:
-               print(f'Unsupported: {f}')
-            if methodcall:
                if verbose:
                   print(f'Calling: {name}({kwargs})')
-               r = methodcall(**kwargs)
-               if isinstance(r, str):
-                  print(r)
-               elif isinstance(r, bytes):
-                  print(r.decode('utf-8'))
-               elif isinstance(r, ET.Element):
-                  xml_indent(r)
-                  ET.dump(r)
-                  sys.stdout.flush()
-               else:
-                  pprint.pprint(r)
+               call_method(methodcall, kwargs)
             else:
-               print('No such function:', name)
+               print(f'Unsupported: {name}')
+
             if self.args.sleep1:
                print(f'Sleep for {self.args.sleep1} seconds')
                time.sleep(float(self.args.sleep1))
@@ -1942,7 +1952,6 @@ if __name__ == '__main__':
       # interface = VapixClient
       # Or..
       interface = MyUsecases
-      tool_list = interface.functions()
       parser = create_parser(config, interface)
       args = parser.parse_args()
       if args.camera is None:
@@ -1953,6 +1962,7 @@ if __name__ == '__main__':
          sys.exit(2)
       # If requested, show documentation and exit
       if args.document:
+         tool_list = interface.functions()
          for func in args.function:
             if func in tool_list:
                print(getattr(interface, func).__doc__)
