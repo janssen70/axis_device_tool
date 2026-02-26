@@ -194,6 +194,28 @@ def StandardSSLContext():
    ctx.verify_mode = ssl.CERT_NONE
    return ctx
 
+class SelectiveHTTPErrorProcessor(urllib.request.HTTPErrorProcessor):
+   def _handle_error(self, request, response, code, msg, hdrs, protocol):
+      """
+      Let auth errors (401, 407) propagate so auth handlers can retry
+      """
+      if code in (401, 407):
+         # Call parent to raise HTTPError exception
+         if protocol == 'http':
+            return super().http_error_default(request, response, code, msg, hdrs)
+         else:
+            return super().https_error_default(request, response, code, msg, hdrs)
+
+      # For other errors, return the response
+      print(f'Notice! Got a {response.status}')
+      return response
+
+   def http_error_default(self, request, response, code, msg, hdrs):
+      return self._handle_error(request, response, code, msg, hdrs, 'http')
+
+   def https_error_default(self, request, response, code, msg, hdrs):
+      return self._handle_error(request, response, code, msg, hdrs, 'https')
+
 class WebAccess:
    """
    A urllib based http-client. There are no real advantages to the urllib
@@ -213,14 +235,15 @@ class WebAccess:
       self.pwd_mngr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
       self.cj = http.cookiejar.LWPCookieJar()
       self.cookie_file = temp_dir + os.sep + 'cookie.lwp'
-      self.h = []
-      self.h.append(urllib.request.HTTPHandler(debuglevel=DEBUG_HTTP))
-      self.h.append(urllib.request.HTTPSHandler(
-          debuglevel=DEBUG_HTTP, context=context))
-      self.h.append(urllib.request.HTTPDigestAuthHandler(self.pwd_mngr))
-      self.h.append(urllib.request.HTTPBasicAuthHandler(self.pwd_mngr))
+      self.h = [
+         urllib.request.HTTPHandler(debuglevel=DEBUG_HTTP),
+         urllib.request.HTTPSHandler(debuglevel=DEBUG_HTTP, context=context),
+         urllib.request.HTTPDigestAuthHandler(self.pwd_mngr),
+         urllib.request.HTTPBasicAuthHandler(self.pwd_mngr)
+      ]
       if proxy:
          self.h.append(urllib.request.ProxyHandler({'http': proxy}))
+      self.h.append(SelectiveHTTPErrorProcessor())
       self.opener = urllib.request.build_opener(*self.h)
       self.context = context
 
@@ -680,7 +703,7 @@ class VapixClient:
      4. JSON based functions
    """
 
-   def __init__(self, w, dump_raw_bytes=False):
+   def __init__(self, w, dump_raw_bytes = False):
       self.w = w
       self.debug = dump_raw_bytes
       # SOAP-related
@@ -689,6 +712,8 @@ class VapixClient:
       # Used for converting vapix namespaces to topicfilter namespaces
       self.denamespacer = EventtopicDenamespacer(MINIMAL_VAPIX_NAMESPACES)
       self.params = {}
+      self.configure_dump_plain_request_callback()
+      self.configure_dump_plain_reply_callback()
 
    @classmethod
    def functions(cls):
@@ -696,6 +721,18 @@ class VapixClient:
       Return the list of supported functions
       """
       return [m for m in dir(cls) if isinstance(getattr(cls, m), collections.abc.Callable) and not m.startswith('_')]
+
+   def configure_dump_plain_request_callback(self, f = None):
+      """
+      Install (or set to default) the plain request dump function
+      """
+      self.dump_plain_request_callback = f if f else self._dump_request
+
+   def configure_dump_plain_reply_callback(self, f = None):
+      """
+      Install (or set to default) the plain reply dump function
+      """
+      self.dump_plain_reply_callback = f if f else self._dump_plain_reply
 
    # ----------------------------------------------------------------------------
    # Communication functions                                                {{{2
@@ -746,14 +783,14 @@ class VapixClient:
 
       It does POST when data is provided or the method is 'POST'.
       """
-      self._dump_request(url, data)
+      self.dump_plain_request_callback(url, data)
       if extra_headers is None:
          extra_headers = {}
       if data or method == 'POST':
          rawdata = self.w.post(url, data, extra_headers).read()
       else:
          rawdata = self.w.get(url).read()
-      self._dump_plain_reply(rawdata)
+      self.dump_plain_reply_callback(rawdata)
       return rawdata
 
    def _json_vapix_call(
@@ -794,7 +831,7 @@ class VapixClient:
       return envelope
 
    def _simple_vapix_xml_response_call(self, url) -> ET.Element:
-      self._dump_request(url)
+      self.dump_plain_request_callback(url)
       rawdata = self.w.get(url).read()
       envelope = ET.fromstring(rawdata)
       self._dump_xml_reply(envelope)
@@ -911,7 +948,7 @@ class VapixClient:
       Default is mode zip_with_image
       """
       url = f'/axis-cgi/admin/serverreport.cgi?mode={mode}'
-      self._dump_request(url)
+      self.dump_plain_request_callback(url)
       r = self.w.get(url)
       filename = None
       headers = r.info()
@@ -1373,12 +1410,17 @@ class VapixClient:
 
    #----------------------------------------------------------------------------
    # MQTT Setup                                                             {{{2
+   #
+   # See:
+   #   - https://developer.axis.com/vapix/network-video/mqtt-client-api/
+   #   - https://developer.axis.com/vapix/network-video/mqtt-event-bridge/
+   #
    #----------------------------------------------------------------------------
 
-   def MQTTActivate(self):
+   def MQTTActivate(self) -> dict:
       return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_ACTIVATE_CLIENT)
 
-   def MQTTDeactivate(self):
+   def MQTTDeactivate(self) -> dict:
       return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_DEACTIVATE_CLIENT)
 
    def MQTTGetConfig(self):
@@ -1387,16 +1429,22 @@ class VapixClient:
       """
       return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_CLIENT_STATUS)
 
-   def MQTTConfig(self, broker_usr = '', broker_passwd = '', broker_addr = '192.168.2.95', broker_port = 1883, protocol = 'tcp'):
+   def MQTTSetConfig(self,
+         broker_usr = '',
+         broker_passwd = '',
+         broker_addr = '192.168.2.95',
+         broker_port = 1883,
+         protocol = 'tcp',
+         base_path = 'mqtt/'
+      ) -> Union[str, dict]:
       """
-      Call: MQTTConfig(broker_usr=username,broker_passwd=pwd,broker-addr=address,
-                         broker_port=port,protocol=[udp|tcp|websocket])
+      Call: MQTTSetConfig(broker_usr=username,broker_passwd=pwd,broker-addr=address,
+                         broker_port=port,protocol=[udp|tcp|ws|wss])
 
       Configure the MQTT Client on a device with a simple TCP based
-      broker-connection. It takes care to not reconfigure if the settings are
-      already in place
-
-      Note: password is not returned by device, so always a mismatch :(
+      broker-connection. It tries avoid reconfiguration if the settings are
+      already in place, but as password is never returned by device this
+      doesn't work 100%.
       """
       current_config = self.MQTTGetConfig()
       c = current_config['data']['config']
@@ -1407,10 +1455,19 @@ class VapixClient:
 
          c['server']['host'] = broker_addr
          c['server']['port'] = broker_port
-         c['server']['protocol'] = 'tcp'
+         c['server']['protocol'] = protocol
+         if protocol.startswith('ws'):
+            c['server']['basepath'] = base_path
+
          c['username'] = broker_usr
          c['password'] = broker_passwd
-         self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('1.0', 'configureClient', json.dumps(c)))
+
+         if protocol.startswith('wss'):
+            c['ssl'] = {}
+            c['ssl']['validateServerCert'] = False
+         response = self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('1.0', 'configureClient', json.dumps(c)))
+         if  (err := response.get('error')):
+            return err['message']
          return self.MQTTActivate()
       return 'No change'
 
