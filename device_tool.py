@@ -690,6 +690,17 @@ LoadCACertificatesXml = """<?xml version="1.0" encoding="UTF-8"?>
 </Envelope>
 """
 
+def _xml_or_error(envelope: ET.Element) -> Union[ET.Element, str]:
+   """
+   Return <response> unless an error detail is found, in that case return only
+   the detail.  Poor man's error handling. Caller can check whether the result
+   is string-type or not.
+   """
+   result = envelope.find('SOAP-ENV:Body/SOAP-ENV:Fault/SOAP-ENV:Detail/SOAP-ENV:Text', MINIMAL_VAPIX_NAMESPACES)
+   if result is not None:
+      return str(result.text)
+   else:
+      return envelope
 
 class VapixClient:
    """
@@ -1515,15 +1526,16 @@ class VapixClient:
       CACERTSPEC = '<tt:CACertificateID>{}</tt:CACertificateID>'
       cacert_spec = ''.join([CACERTSPEC.format(name) for name in config['ca_certs']])
 
-      self._simple_vapix_webservice_call(SetDot1XConfigXml.format(
-         token = 'EAPTLS_WIRED',
-         mac = config['serial'],
-         method = config['eap_method'],
-         certname = config['client_cert'],
-         cacert_spec = cacert_spec
-      ))
+      r = _xml_or_error(self._simple_vapix_webservice_call(SetDot1XConfigXml.format(
+            token = 'EAPTLS_WIRED',
+            mac = config['serial'],
+            method = config['eap_method'],
+            certname = config['client_cert'],
+            cacert_spec = cacert_spec
+         )))
 
-      # TODO: check webservice response?
+      if isinstance(r, str):
+         return r
 
       return self._json_vapix_call(
          '/axis-cgi/network_settings.cgi',
@@ -1592,8 +1604,7 @@ class VapixClient:
 
       dot1x_conf['ca_certs'].append(cacert_name)
       dot1x_conf['serial'] = self.GetSerialNumber()
-      self._set_dot1x_config(dot1x_conf)
-      return 'Done'
+      return self._set_dot1x_config(dot1x_conf)
 
    def RemoveDot1XCACertName(self, cacert_name):
       """
@@ -1610,8 +1621,7 @@ class VapixClient:
 
       dot1x_conf['ca_certs'].remove(cacert_name)
       dot1x_conf['serial'] = self.GetSerialNumber()
-      self._set_dot1x_config(dot1x_conf)
-      return 'Done'
+      return self._set_dot1x_config(dot1x_conf)
 
    def GetCACertificateNames(self):
       """
@@ -1649,9 +1659,9 @@ class VapixClient:
       if lines[0] != '-----BEGIN CERTIFICATE-----\n':
          return f'Failed: {filename} has unexpected content'
 
-      return self._simple_vapix_webservice_call(
+      return _xml_or_error(self._simple_vapix_webservice_call(
             LoadCACertificatesXml.format(cert_id = title, body = ''.join(lines[1:-1]))
-         )
+         ))
 
 # -------------------------------------------------------------------------------
 #
