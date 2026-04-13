@@ -804,6 +804,39 @@ class VapixClient:
       self.dump_plain_reply_callback(rawdata)
       return rawdata
 
+   def _file_download(self,
+         url: str,
+         data: Optional[str] = None,
+         extra_headers: Optional[Dict[str, str]] = None,
+         method: Optional[str] = None
+   ) -> bytes:
+      """
+      Perform a GET or POST and handle file response
+
+      It does POST when data is provided or the method is 'POST'.
+      """
+      self.dump_plain_request_callback(url, data)
+      if extra_headers is None:
+         extra_headers = {}
+      if data or method == 'POST':
+         req = self.w.post(url, data, extra_headers)
+      else:
+         req = self.w.get(url)
+
+      if not (name := req.headers.get_filename()):
+         name = os.path.basename(urlparse(url).path) or "downloaded_file"
+
+       # Stream download
+      with open(name, 'wb') as f:
+         chunk_size = 8192
+         while True:
+            chunk = req.read(chunk_size)
+            if not chunk:
+               break
+            f.write(chunk)
+
+      return name
+
    def _json_vapix_call(
        self, url, data: Union[dict, str]
    ) -> dict:
@@ -1516,155 +1549,41 @@ class VapixClient:
          return 'No change'
 
    #----------------------------------------------------------------------------
-   # IEEE 802.1X                                                            {{{2
+   #
+   # Edge recording                                                         {{{2
+   #
    #----------------------------------------------------------------------------
 
-   def _set_dot1x_config(self, config):
+   def ListRecordings(self, rec_id = 'all', other_args = ''):
       """
-      Applies IEEE 802.1x config from internal data structure
+      Call: ListRecordings( rec_id=all|ID, other_args="")
+
+      Print out the edge recordings
       """
-      CACERTSPEC = '<tt:CACertificateID>{}</tt:CACertificateID>'
-      cacert_spec = ''.join([CACERTSPEC.format(name) for name in config['ca_certs']])
+      table = []
+      url = f'/axis-cgi/record/list.cgi?recordingid={rec_id}{"&" if len(other_args) else ""}{other_args}'
+      envelope = self._simple_vapix_xml_response_call(url)
+      for r in list(envelope.find('recordings')):
+         recording = {}
+         for attr in r.attrib:
+            recording[attr] = r.attrib[attr]
+         for detail in list(r):
+            recording[detail.tag] = {}
+            for attr in detail.attrib:
+               recording[ detail.tag ][ attr ] = detail.attrib[ attr ]
+         table.append(recording)
+      return table
 
-      r = _xml_or_error(self._simple_vapix_webservice_call(SetDot1XConfigXml.format(
-            token = 'EAPTLS_WIRED',
-            mac = config['serial'],
-            method = config['eap_method'],
-            certname = config['client_cert'],
-            cacert_spec = cacert_spec
-         )))
-
-      if isinstance(r, str):
-         return r
-
-      return self._json_vapix_call(
-         '/axis-cgi/network_settings.cgi',
-         JSON_REQUEST.format(
-            '1.15',
-            'setWired8021XConfiguration',
-            '{{"deviceName":"eth0","eapolVersion":"EAPoLv2","enabled":true,"identity":"{}","mode":"WPA-Enterprise-EAPTLS"}}'.format(config['serial'])
-         )
-      )
-
-   def GetDot1XConfiguration(self):
+   def ExportRecording(self, disk_id : str = 'NetworkShare', rec_id : str = None):
       """
-      Get the IEEE 802.1x configuration
+      Call: ExportRecording(rec_id=recordingid)
+
+      Download a recording from the device
       """
-      envelope = self._simple_vapix_webservice_call(GetDot1XConfigXml.format(
-         token = 'EAPTLS_WIRED',
-      ))
-      if (conf := envelope.find('SOAP-ENV:Body/tds:GetDot1XConfigurationResponse/tds:Dot1XConfiguration', MINIMAL_VAPIX_NAMESPACES)) is not None:
-         dotx_conf = {
-            'ca_certs': []
-         }
-         for ca in conf.findall('tt:CACertificateID', MINIMAL_VAPIX_NAMESPACES):
-           dotx_conf['ca_certs'].append(ca.text)
-         dotx_conf['eap_method'] = conf.find('tt:EAPMethod', MINIMAL_VAPIX_NAMESPACES).text
-         dotx_conf['client_cert'] = conf.find('tt:EAPMethodConfiguration/tt:TLSConfiguration/tt:CertificateID', MINIMAL_VAPIX_NAMESPACES).text
-         return dotx_conf
-      return None
+      url = f'/axis-cgi/record/export/exportrecording.cgi?schemaversion=1&recordingid={rec_id}&diskid={disk_id}&exportformat=matroska'
+      return self._file_download(url)
 
-   def SetDot1XConfiguration(self, certname = 'X', cacert1name = 'Y', cacert2name = None):
-      """
-      Configure certificate-based port authentication with 1 or 2 certs for
-      evaluating RADIUS server certificate
-      """
-      dot1x_conf = {
-         'ca_certs': [ cacert1name ],
-         'serial': self.GetSerialNumber(),
-         'eap_method': '13',
-         'client_cert': certname
-      }
-      if cacert2name:
-         dot1x_conf['ca_certs'].append(cacert2name)
-
-      # TODO: Check validity of the cert names
-
-      return self._set_dot1x_config(dot1x_conf)
-
-   def AddDot1XCACertName(self, cacert_name):
-      """
-      Add another CA Cert for RADIUS server cert verification. This function
-      aids in making no mistakes:
-
-      - It checks for existance of the CA cert with name <cacert_name>
-      - It checks whether the config isn't already using <cacert_name>
-
-      Pre:
-      - The device should already have a valid IEEE 802.1X configuration
-      """
-      cacert_names = self.GetCACertificateNames()
-      dot1x_conf = self.GetDot1XConfiguration()
-
-      if cacert_name not in cacert_names:
-         return f'Failed: No CA certificate present with name {cacert_name}'
-
-      if cacert_name in dot1x_conf['ca_certs']:
-         return f'Failed: CA certificate {cacert_name} is already used for RADIUS verification'
-
-      dot1x_conf['ca_certs'].append(cacert_name)
-      dot1x_conf['serial'] = self.GetSerialNumber()
-      return self._set_dot1x_config(dot1x_conf)
-
-   def RemoveDot1XCACertName(self, cacert_name):
-      """
-      Remove <cacert_name> from the list of CA certs for RADIUS verification,
-      as long some other certificate remains
-      """
-      dot1x_conf = self.GetDot1XConfiguration()
-
-      if cacert_name not in dot1x_conf['ca_certs']:
-         return f'Failed: CA certificate {cacert_name} is not used for RADIUS verification'
-
-      if len(dot1x_conf['ca_certs']) <= 1:
-         return f'Failed: No other CA certificate would remain'
-
-      dot1x_conf['ca_certs'].remove(cacert_name)
-      dot1x_conf['serial'] = self.GetSerialNumber()
-      return self._set_dot1x_config(dot1x_conf)
-
-   def GetCACertificateNames(self):
-      """
-      Get the certificates and print the names
-      """
-      names = []
-      envelope = self._simple_vapix_webservice_call(GetCACertificatesXml)
-      for cert in list(envelope.find('SOAP-ENV:Body/tds:GetCACertificatesResponse', MINIMAL_VAPIX_NAMESPACES)):
-         if (the_id := cert.find('tt:CertificateID', MINIMAL_VAPIX_NAMESPACES)) is not None:
-            names.append(the_id.text)
-      return names
-
-   def DeleteCertificate(self, cert_name):
-      """
-      Remove a certiticate. This function uses the webservice API, newer
-      devices have a Decaf API:
-      http://192.168.200.13/config/rest/cert/v1/ca_certificates/,cert_id>
-      """
-      return self._simple_vapix_webservice_call(DeleteCertificateXml.format(cert_name))
-
-   def LoadCACertificate(self, filename):
-      """
-      Load a CA Certificate. The filename without extension is used
-      as Certificate ID
-      """
-      if not os.path.exists(filename):
-         return f'Failed: {filename} not found'
-
-      basename = os.path.basename(filename)
-      title = os.path.splitext(basename)[0]
-
-      with open(filename, 'rt') as f:
-         lines = f.readlines()
-
-      if lines[0] != '-----BEGIN CERTIFICATE-----\n':
-         return f'Failed: {filename} has unexpected content'
-
-      return _xml_or_error(self._simple_vapix_webservice_call(
-            LoadCACertificatesXml.format(cert_id = title, body = ''.join(lines[1:-1]))
-         ))
-
-# -------------------------------------------------------------------------------
-#
+   #----------------------------------------------------------------------------
 #   Other                                                                   {{{1
 #
 # -------------------------------------------------------------------------------
@@ -1854,6 +1773,7 @@ class MyUsecases(VapixClient):
 
 # -------------------------------------------------------------------------------
 #
+
 #   Main                                                                    {{{1
 #
 # -------------------------------------------------------------------------------
