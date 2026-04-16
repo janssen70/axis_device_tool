@@ -806,12 +806,13 @@ class VapixClient:
 
    def _file_download(self,
          url: str,
+         folder: str = '.',
          data: Optional[str] = None,
          extra_headers: Optional[Dict[str, str]] = None,
          method: Optional[str] = None
    ) -> bytes:
       """
-      Perform a GET or POST and handle file response
+      Perform a GET or POST and handle file response, write result in <folder>
 
       It does POST when data is provided or the method is 'POST'.
       """
@@ -826,8 +827,8 @@ class VapixClient:
       if not (name := req.headers.get_filename()):
          name = os.path.basename(urlparse(url).path) or "downloaded_file"
 
-       # Stream download
-      with open(name, 'wb') as f:
+      # Stream download
+      with open(full_name := f'{folder}/{name}', 'wb') as f:
          chunk_size = 8192
          while True:
             chunk = req.read(chunk_size)
@@ -835,7 +836,7 @@ class VapixClient:
                break
             f.write(chunk)
 
-      return name
+      return full_name
 
    def _json_vapix_call(
        self, url, data: Union[dict, str]
@@ -1574,14 +1575,14 @@ class VapixClient:
          table.append(recording)
       return table
 
-   def ExportRecording(self, disk_id : str = 'NetworkShare', rec_id : str = None):
+   def ExportRecording(self, folder : str = '.', disk_id : str = 'NetworkShare', rec_id : str = None):
       """
       Call: ExportRecording(rec_id=recordingid)
 
       Download a recording from the device
       """
       url = f'/axis-cgi/record/export/exportrecording.cgi?schemaversion=1&recordingid={rec_id}&diskid={disk_id}&exportformat=matroska'
-      return self._file_download(url)
+      return self._file_download(url, folder)
 
    #----------------------------------------------------------------------------
 #   Other                                                                   {{{1
