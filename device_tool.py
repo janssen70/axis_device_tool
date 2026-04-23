@@ -586,7 +586,8 @@ MINIMAL_VAPIX_NAMESPACES = {
    'act': 'http://www.axis.com/vapix/ws/action1',
    'entry': 'http://www.axis.com/vapix/ws/entry',
    'tds': 'http://www.onvif.org/ver10/device/wsdl',
-   'tt': 'http://www.onvif.org/ver10/schema'
+   'tt': 'http://www.onvif.org/ver10/schema',
+   'or': 'http://www.axis.com/vapix/http_cgi/orientation1'
 }
 
 LIST_FEATUREFLAGS = """
@@ -1645,8 +1646,16 @@ class VapixClient:
 
    def GetLongitudinalValue(self):
       envelope = self._simple_vapix_xml_response_call('/axis-cgi/orientation/getlongitudinalvalue.cgi?schemaversion=1')
-      if (val := envelope.find('OrientationResponse/Success/GetLongitudinalValueSuccess/LongitudinalValue/Value')):
-        return val.text
+      if (val := envelope.find('or:Success/or:GetLongitudinalValueSuccess/or:LongitudinalValue/or:Value', MINIMAL_VAPIX_NAMESPACES)) is not None:
+        print(f'Longitudinal value: {val.text}')
+        return int(val.text)
+      return 'Could not find value'
+
+   def GetLateralValue(self):
+      envelope = self._simple_vapix_xml_response_call('/axis-cgi/orientation/getlateralvalue.cgi?schemaversion=1')
+      if (val := envelope.find('or:Success/or:GetLateralValueSuccess/or:LateralValue/or:Value', MINIMAL_VAPIX_NAMESPACES)) is not None:
+        print(f'Lateral value: {val.text}')
+        return int(val.text)
       return 'Could not find value'
 
 #-------------------------------------------------------------------------------
