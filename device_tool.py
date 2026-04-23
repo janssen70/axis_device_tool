@@ -284,6 +284,24 @@ class WebAccess:
          req = urllib.request.Request(url, params, headers=extra_headers)
       return self.opener.open(req)
 
+   def request(self,
+         url_str: str,
+         method: str,
+         params: Optional[Union[bytes,str]] = None,
+         extra_headers: Optional[Dict[str, str]] = None
+   ) -> urllib.response.addinfourl:
+      """
+      Perform any HTTP request
+      """
+      url = self.site_url + url_str
+      if extra_headers is None:
+         extra_headers = {}
+      if isinstance(params, str):
+         req = urllib.request.Request(url, params.encode('utf-8'), headers=extra_headers, method=method)
+      else:
+         req = urllib.request.Request(url, params, headers=extra_headers,method=method)
+      return self.opener.open(req)
+
    def post_file(self,
          url_str: str,
          filename: str,
@@ -753,9 +771,9 @@ class VapixClient:
    # Communication functions                                                {{{2
    # ----------------------------------------------------------------------------
 
-   def _dump_request(self, req: str, data=None):
+   def _dump_request(self, req: str, method: str, data=None):
       if self.debug:
-         print(f'\nRequest:\n========\n{req}\n')
+         print(f'\nRequest:\n========\n{method} {req}\n')
          if data:
             print('\nData:\n--------\n')
             print(data)
@@ -798,13 +816,18 @@ class VapixClient:
 
       It does POST when data is provided or the method is 'POST'.
       """
-      self.dump_plain_request_callback(url, data)
       if extra_headers is None:
          extra_headers = {}
-      if data or method == 'POST':
-         rawdata = self.w.post(url, data, extra_headers).read()
-      else:
+
+      if method is None:
+         method = 'GET' if data is None else 'POST'
+
+      self.dump_plain_request_callback(url, method, data)
+      if method == 'GET':
          rawdata = self.w.get(url).read()
+      else:
+         rawdata = self.w.request(url, method, data, extra_headers).read()
+
       self.dump_plain_reply_callback(rawdata)
       return rawdata
 
@@ -820,12 +843,13 @@ class VapixClient:
 
       It does POST when data is provided or the method is 'POST'.
       """
-      self.dump_plain_request_callback(url, data)
       if extra_headers is None:
          extra_headers = {}
       if data or method == 'POST':
+         self.dump_plain_request_callback(url, 'POST', data)
          req = self.w.post(url, data, extra_headers)
       else:
+         self.dump_plain_request_callback(url, 'GET')
          req = self.w.get(url)
 
       if not (name := req.headers.get_filename()):
@@ -843,7 +867,10 @@ class VapixClient:
       return full_name
 
    def _json_vapix_call(
-       self, url, data: Union[dict, str]
+       self,
+       url: str,
+       data: Optional[Union[dict, str]] = None,
+       method: Optional[str] = None
    ) -> dict:
       """
       Perform a JSON Vapix-call, dict or string in, dict out
@@ -854,14 +881,19 @@ class VapixClient:
       elif isinstance(data, dict):
          data = json.dumps(data)
 
+      headers = {
+         'Accept-Encoding': 'application/json'
+      }
+      if data:
+         headers.update({
+            'Content-Type': 'application/json',
+         })
       return json.loads(
          self._simple_vapix_call(
             url,
             data,
-            extra_headers = {
-               'Content-Type': 'application/json',
-               'Accept-Encoding': 'application/json'
-            }
+            extra_headers = headers,
+            method = method
          ).decode('utf-8')
       )
 
@@ -880,7 +912,7 @@ class VapixClient:
       return envelope
 
    def _simple_vapix_xml_response_call(self, url) -> ET.Element:
-      self.dump_plain_request_callback(url)
+      self.dump_plain_request_callback(url, 'GET')
       rawdata = self.w.get(url).read()
       envelope = ET.fromstring(rawdata)
       self._dump_xml_reply(envelope)
@@ -997,7 +1029,7 @@ class VapixClient:
       Default is mode zip_with_image
       """
       url = f'/axis-cgi/admin/serverreport.cgi?mode={mode}'
-      self.dump_plain_request_callback(url)
+      self.dump_plain_request_callback(url, 'GET')
       r = self.w.get(url)
       filename = None
       headers = r.info()
@@ -1170,7 +1202,7 @@ class VapixClient:
       """
       return json.dumps(self._json_vapix_call(
          '/axis-cgi/featureflag.cgi',
-         LIST_FEATUREFLAGS
+         data = LIST_FEATUREFLAGS
       ))
 
    # ----------------------------------------------------------------------------
@@ -1439,11 +1471,11 @@ class VapixClient:
    def ListProducers(self):
       return json.dumps(self._json_vapix_call(
          '/axis-cgi/analyticsmetadataconfig.cgi',
-         MD_LIST_PRODUCERS
+         data = MD_LIST_PRODUCERS
       ))
 
    def GetSupportedMetadata(self):
-      response = self._json_vapix_call('/axis-cgi/analyticsmetadataconfig.cgi', MD_GET_SUPPORTED_METADATA)
+      response = self._json_vapix_call('/axis-cgi/analyticsmetadataconfig.cgi', data = MD_GET_SUPPORTED_METADATA)
       for example in response.get('data', {}).get('producers', []):
          print(f'\n{example["name"]}:')
          xml = ET.fromstring(example['sampleFrameXML'])
@@ -1454,7 +1486,7 @@ class VapixClient:
    def GetSupportedVersions(self):
       return json.dumps(self._json_vapix_call(
          '/axis-cgi/analyticsmetadataconfig.cgi',
-         GET_SUPPORTED_VERSIONS
+         data = GET_SUPPORTED_VERSIONS
       ))
 
    #----------------------------------------------------------------------------
@@ -1467,16 +1499,16 @@ class VapixClient:
    #----------------------------------------------------------------------------
 
    def MQTTActivate(self) -> dict:
-      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_ACTIVATE_CLIENT)
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', data = MQTT_ACTIVATE_CLIENT)
 
    def MQTTDeactivate(self) -> dict:
-      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_DEACTIVATE_CLIENT)
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', data = MQTT_DEACTIVATE_CLIENT)
 
    def MQTTGetConfig(self):
       """
       Returns current broker configuration
       """
-      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', MQTT_CLIENT_STATUS)
+      return self._json_vapix_call('/axis-cgi/mqtt/client.cgi', data = MQTT_CLIENT_STATUS)
 
    def MQTTSetConfig(self,
          broker_usr = '',
@@ -1514,7 +1546,7 @@ class VapixClient:
          if protocol.startswith('wss'):
             c['ssl'] = {}
             c['ssl']['validateServerCert'] = False
-         response = self._json_vapix_call('/axis-cgi/mqtt/client.cgi', JSON_REQUEST.format('1.0', 'configureClient', json.dumps(c)))
+         response = self._json_vapix_call('/axis-cgi/mqtt/client.cgi', data = JSON_REQUEST.format('1.0', 'configureClient', json.dumps(c)))
          if  (err := response.get('error')):
             return err['message']
          return self.MQTTActivate()
@@ -1527,7 +1559,7 @@ class VapixClient:
       """
       Get the current event publications
       """
-      response = self._json_vapix_call('/axis-cgi/mqtt/event.cgi', '{"apiVersion":"1.1","method":"getEventPublicationConfig"}')
+      response = self._json_vapix_call('/axis-cgi/mqtt/event.cgi', data = '{"apiVersion":"1.1","method":"getEventPublicationConfig"}')
       return response['data']['eventPublicationConfig']['eventFilterList']
 
    def MQTTAddEventPublications(self, topic_filter_list : list[str]):
@@ -1543,7 +1575,7 @@ class VapixClient:
             'eventFilterList': topic_filter_list
          }
       }
-      return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', json.dumps(publications_request))
+      return self._json_vapix_call('/axis-cgi/mqtt/event.cgi', data = json.dumps(publications_request))
 
    def MQTTAddEventPublication(self, topic_filter : str = 'onvif:AudioSource/axis:TriggerLevel', retain : str = 'none', qos : int = 0):
       publications = self.MQTTGetEventPublications()
@@ -1608,7 +1640,7 @@ class VapixClient:
    def GetPencilCapabilities(self):
       """
       """
-      response = self._json_vapix_call('/axis-cgi/pencil.cgi', '{"apiVersion":"1.0","context": "123","method":"getFilterCapabilities"}')
+      response = self._json_vapix_call('/axis-cgi/pencil.cgi', data = '{"apiVersion":"1.0","context": "123","method":"getFilterCapabilities"}')
       return response
 
    #----------------------------------------------------------------------------
@@ -1619,12 +1651,12 @@ class VapixClient:
 
    def GetApiVersions(self):
 
-      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', '{"method":"getSupportedVersions"}')
+      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', data = '{"method":"getSupportedVersions"}')
       return response['data']['apiVersions']
 
    def GetApiList(self, version = '1.0'):
 
-      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', f'{{"apiVersion":"{version}","method":"getApiList"}}')
+      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', data = f'{{"apiVersion":"{version}","method":"getApiList"}}')
       result = [(api['id'], api['name'], api['version'], api.get('status','')) for api in sorted(response['data']['apiList'], key=lambda x: x["name"].lower())]
       return result
 
@@ -1644,7 +1676,24 @@ class VapixClient:
          return self._simple_vapix_call(f'/axis-cgi/geolocation/set.cgi?lat={lat}&lng={lng}&heading={heading}&text={text}')
       return 'Error: need all of lat, lng, heading'
 
+   def GetGeoOrientation(self):
+      """
+      """
+      envelope = self._simple_vapix_xml_response_call('/axis-cgi/geoorientation/geoorientation.cgi?action=get')
+      return envelope
+
+   def SetGeoOrientation(self, height, heading):
+      return self._simple_vapix_call(f'/axis-cgi/geoorientation/geoorientation.cgi?action=set&inst_height={height}&heading={heading}&tilt=90&roll=180')
+
+   def ApplyGeoSettings(self):
+      return self._simple_vapix_call(f'/axis-cgi/geoorientation/geoorientation.cgi?action=set&auto_update_once=true')
+
+
    def GetLongitudinalValue(self):
+      """
+      Longitudinal: imagine camera rotating sideways -> corridor -> upsidedown, and continue. P13 upside up = 180, upside down = 0
+      lateral is tilt back and forth. Level with horizon is 90, looking down is 0
+      """
       envelope = self._simple_vapix_xml_response_call('/axis-cgi/orientation/getlongitudinalvalue.cgi?schemaversion=1')
       if (val := envelope.find('or:Success/or:GetLongitudinalValueSuccess/or:LongitudinalValue/or:Value', MINIMAL_VAPIX_NAMESPACES)) is not None:
         print(f'Longitudinal value: {val.text}')
@@ -1657,6 +1706,26 @@ class VapixClient:
         print(f'Lateral value: {val.text}')
         return int(val.text)
       return 'Could not find value'
+
+   #----------------------------------------------------------------------------
+   # Analytics datasource                                                   {{{2
+   #----------------------------------------------------------------------------
+
+   def AvailableDataSources(self):
+      return self._json_vapix_call('/config/rest/analytics-mqtt/v1/data_sources')
+
+   def ListMQTTPublishers(self):
+      return self._json_vapix_call('/config/rest/analytics-mqtt/v1/publishers')
+
+   def AddMQTTPublisher(self, pub_id = 'publisher_id', data_source = 'axis.scene.frame_v1#1', mqtt_topic = 'analytics'):
+      return self._json_vapix_call(
+         '/config/rest/analytics-mqtt/v1/publishers',
+         data = f'{{"data": {{"id": "{pub_id}", "data_source_key": "{data_source}", "mqtt_topic": "{mqtt_topic}"}} }}'
+      )
+
+   def RemoveMQTTPublisher(self, name : str = 'my_publisher'):
+      return self._json_vapix_call(f'/config/rest/analytics-mqtt/v1/publishers/{name}', method = 'DELETE')
+
 
 #-------------------------------------------------------------------------------
 #
