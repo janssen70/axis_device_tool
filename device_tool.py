@@ -573,6 +573,9 @@ def MakeActionConfiguration(token, name, **kwargs):
 
 # See: https://stackoverflow.com/questions/55921412
 
+# ----------------------------------------------------------------------------
+# Plumbing                                                               {{{2
+# ----------------------------------------------------------------------------
 
 MINIMAL_VAPIX_NAMESPACES = {
    'SOAP-ENV': 'http://www.w3.org/2003/05/soap-envelope',
@@ -1584,9 +1587,32 @@ class VapixClient:
       return self._file_download(url)
 
    #----------------------------------------------------------------------------
+   # Location/Orientation                                                   {{{2
+   #----------------------------------------------------------------------------
+
+   def SetGeolocation(self, lat : str = None, lng : str = None, heading : str = None, text : str = ''):
+      """
+      Use a free app on your phone to get the data
+      Note leading zero's necessary to make lat 2 DD positions and lng 3.
+      See: https://developer.axis.com/vapix/network-video/geolocation-api/#unit-types
+
+      51.55324, 004.274870, 293
+      """
+      if lat and lng and heading:
+         return self._simple_vapix_call(f'/axis-cgi/geolocation/set.cgi?lat={lat}&lng={lng}&heading={heading}&text={text}')
+      return 'Error: need all of lat, lng, heading'
+
+   def GetLongitudinalValue(self):
+      envelope = self._simple_vapix_xml_response_call('/axis-cgi/orientation/getlongitudinalvalue.cgi?schemaversion=1')
+      if (val := envelope.find('OrientationResponse/Success/GetLongitudinalValueSuccess/LongitudinalValue/Value')):
+        return val.text
+      return 'Could not find value'
+
+#-------------------------------------------------------------------------------
+#
 #   Other                                                                   {{{1
 #
-# -------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 class MyUsecases(VapixClient):
    """
