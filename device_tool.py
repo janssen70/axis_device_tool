@@ -1551,6 +1551,17 @@ class VapixClient:
 
    #----------------------------------------------------------------------------
    #
+   # Edge storage                                                           {{{2
+   #
+   #----------------------------------------------------------------------------
+
+   def ListDisks(self):
+
+      envelope = self._simple_vapix_xml_response_call('/axis-cgi/disks/list.cgi?diskid=all')
+      return True
+
+   #----------------------------------------------------------------------------
+   #
    # Edge recording                                                         {{{2
    #
    #----------------------------------------------------------------------------
@@ -1583,6 +1594,35 @@ class VapixClient:
       """
       url = f'/axis-cgi/record/export/exportrecording.cgi?schemaversion=1&recordingid={rec_id}&diskid={disk_id}&exportformat=matroska'
       return self._file_download(url, folder)
+
+   #----------------------------------------------------------------------------
+   #
+   # Pencil filter                                                          {{{2
+   #
+   #----------------------------------------------------------------------------
+
+   def GetPencilCapabilities(self):
+      """
+      """
+      response = self._json_vapix_call('/axis-cgi/pencil.cgi', '{"apiVersion":"1.0","context": "123","method":"getFilterCapabilities"}')
+      return response
+
+   #----------------------------------------------------------------------------
+   #
+   # API Discovery                                                          {{{2
+   #
+   #----------------------------------------------------------------------------
+
+   def GetApiVersions(self):
+
+      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', '{"method":"getSupportedVersions"}')
+      return response['data']['apiVersions']
+
+   def GetApiList(self, version = '1.0'):
+
+      response = self._json_vapix_call('/axis-cgi/apidiscovery.cgi', f'{{"apiVersion":"{version}","method":"getApiList"}}')
+      result = [(api['id'], api['name'], api['version'], api.get('status','')) for api in sorted(response['data']['apiList'], key=lambda x: x["name"].lower())]
+      return result
 
    #----------------------------------------------------------------------------
 #   Other                                                                   {{{1
