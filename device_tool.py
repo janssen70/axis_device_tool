@@ -1141,6 +1141,19 @@ class VapixClient:
          return f'File not found: {filename}'
 
    # ----------------------------------------------------------------------------
+   # AOA                                                                    {{{2
+   # ----------------------------------------------------------------------------
+
+   def GetAOAConfig(self) -> str:
+      """
+      Call: GetAOAConfig
+      """
+      return json.dumps(self._json_vapix_call(
+         '/local/objectanalytics/control.cgi',
+         data = '{"apiVersion":"1.2","context":"x","method":"getConfiguration"}'
+      ))
+
+   # ----------------------------------------------------------------------------
    # I/O                                                                     {{{3
    # ----------------------------------------------------------------------------
 
