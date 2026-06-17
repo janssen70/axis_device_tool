@@ -1676,6 +1676,11 @@ class VapixClient:
          return self._simple_vapix_call(f'/axis-cgi/geolocation/set.cgi?lat={lat}&lng={lng}&heading={heading}&text={text}')
       return 'Error: need all of lat, lng, heading'
 
+   def GetGeolocation(self):
+      """
+      """
+      return self._simple_vapix_call(f'/axis-cgi/geolocation/get.cgi')
+
    def GetGeoOrientation(self):
       """
       """
@@ -1683,7 +1688,7 @@ class VapixClient:
       return envelope
 
    def SetGeoOrientation(self, height, heading):
-      return self._simple_vapix_call(f'/axis-cgi/geoorientation/geoorientation.cgi?action=set&inst_height={height}&heading={heading}&tilt=90&roll=180')
+      return self._simple_vapix_call(f'/axis-cgi/geoorientation/geoorientation.cgi?action=set&inst_height={height}&heading={heading}')
 
    def ApplyGeoSettings(self):
       return self._simple_vapix_call(f'/axis-cgi/geoorientation/geoorientation.cgi?action=set&auto_update_once=true')
@@ -1717,7 +1722,7 @@ class VapixClient:
    def ListMQTTPublishers(self):
       return self._json_vapix_call('/config/rest/analytics-mqtt/v1/publishers')
 
-   def AddMQTTPublisher(self, pub_id = 'publisher_id', data_source = 'axis.scene.frame_v1#1', mqtt_topic = 'analytics'):
+   def AddMQTTPublisher(self, pub_id = 'my_publisher', data_source = 'axis.scene.frame_v1#1', mqtt_topic = 'analytics'):
       return self._json_vapix_call(
          '/config/rest/analytics-mqtt/v1/publishers',
          data = f'{{"data": {{"id": "{pub_id}", "data_source_key": "{data_source}", "mqtt_topic": "{mqtt_topic}"}} }}'
