@@ -451,9 +451,7 @@ GenericActionRule = """<?xml version="1.0" encoding="UTF-8"?>
           <act:Name>{0}</act:Name>
              {1}
           <act:Enabled>true</act:Enabled>
-          <act:Conditions>
-             {2}
-          </act:Conditions>
+          {2}
           <act:PrimaryAction>{3}</act:PrimaryAction>
         </act:NewActionRule>
       </act:AddActionRule>
@@ -582,6 +580,28 @@ def MakeActionConfiguration(token, name, **kwargs):
       return GenericActionConfiguration.format(name, token, '\n'.join(params))
    print(f'Error: no action-template for {token}')
    return None
+
+def MakeActionRule(rule_name: str, start_event: str, conditions: str, action_configuration_id: str | int) -> str:
+   """
+   Create the XML content to request creation of an actionrule
+
+   rulename:                Nice name of the event rule
+   start_event:             Serialized start-event expression
+   conditions:              Serialized additional conditions list
+   action_configuration_id: The id of an already created action
+
+   Returns: the XML payload
+   """
+   cond = '\n'
+   if conditions:
+      cond = f'<act:Conditions>\n{conditions}\n</act:Conditions>'
+
+   return GenericActionRule.format(
+      rule_name,
+      start_event,
+      cond,
+      action_configuration_id
+   )
 
 # -------------------------------------------------------------------------------
 #
@@ -1119,6 +1139,19 @@ class VapixClient:
             content_type='application/octet-stream').read()
       else:
          return f'File not found: {filename}'
+
+   # ----------------------------------------------------------------------------
+   # AOA                                                                    {{{2
+   # ----------------------------------------------------------------------------
+
+   def GetAOAConfig(self) -> str:
+      """
+      Call: GetAOAConfig
+      """
+      return json.dumps(self._json_vapix_call(
+         '/local/objectanalytics/control.cgi',
+         data = '{"apiVersion":"1.2","context":"x","method":"getConfiguration"}'
+      ))
 
    # ----------------------------------------------------------------------------
    # I/O                                                                     {{{3
@@ -1767,7 +1800,7 @@ class MyUsecases(VapixClient):
                topic = 'tns1:Device/tnsaxis:IO/VirtualInput',
                content_filter = 'boolean(//SimpleItem[@Name="port" and @Value="9"]) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
             )
-         req = GenericActionRule.format(
+         req = MakeActionRule(
             actionrule_name,
             start_event.serialize(),
             conditions.serialize(),
@@ -1781,7 +1814,7 @@ class MyUsecases(VapixClient):
 
    def ActionRuleTest(self, start_event):
       """
-      Configure two rules to Play audio clip triggered by 'start_event', when
+      Configure two rules to Play audio clip triggered by 'start_event', only
       when two schedules are not active. Inspired by a specific troubleshoot
       but usefull as general example for configuring event rules.
 
@@ -1869,6 +1902,32 @@ class MyUsecases(VapixClient):
          {'name': 'My Schedule 4', 'event_id': None, 'ical_spec': 'DTSTART:19700101T180000\nDTEND:19700102T080000\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR'}
       ])
 
+   def DoubleScheduleStartEventRule(self, schedule_id1 = 'com.axis.schedules.genid.id-0', schedule_id2 = 'com.axis.schedules.genid.id-1'):
+      """
+      Logically-or two schedules in the start-event, so that two
+      schedules drive the action (play an audio clip)
+      """
+      envelope = self._simple_vapix_webservice_call(MakeActionConfiguration('com.axis.action.fixed.play.audioclip', 'Play ding-dong', location = 'ding_dong.mp3'))
+      if (action_id := envelope.find('SOAP-ENV:Body/act:AddActionConfigurationResponse/act:ConfigurationID', MINIMAL_VAPIX_NAMESPACES)) is None:
+         return 'Error'
+
+      start_event = StartEvent(
+         topic = 'tns1:UserAlarm/tnsaxis:Recurring/Interval',
+         content_filter = f'(boolean(//SimpleItem[@Name="id" and @Value="{schedule_id1}"]) or boolean(//SimpleItem[@Name="id" and @Value="{schedule_id2}"])) and boolean(//SimpleItem[@Name="active" and @Value="1"])'
+      )
+      req = MakeActionRule(
+         'Double Schedule Test',
+         start_event.serialize(),
+         '',
+         action_id.text
+      )
+      envelope = self._simple_vapix_webservice_call(req)
+      config = envelope.find('SOAP-ENV:Body/act:AddActionRuleResponse/act:RuleID', MINIMAL_VAPIX_NAMESPACES)
+      if config is not None:
+         return config.text
+      # Dump the envelope in case of failure
+      return envelope
+
    def SetupSytemReadyMessage(self, name, recipient_name, url, usr='', passwd='', message='', parameters = ''):
       """
       Add Event Rule for sending out a HTTP notification on SystemReady
@@ -1897,7 +1956,7 @@ class MyUsecases(VapixClient):
             topic = 'tns1:Device/tnsaxis:Status/SystemReady',
             content_filter = 'boolean(//SimpleItem[@Name="ready" and @Value="1"])'
          )
-         req = GenericActionRule.format(
+         req = MakeActionRule(
             name,
             '',
             conditions.serialize(),
