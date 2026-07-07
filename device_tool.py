@@ -195,26 +195,22 @@ def StandardSSLContext():
    return ctx
 
 class SelectiveHTTPErrorProcessor(urllib.request.HTTPErrorProcessor):
-   def _handle_error(self, request, response, code, msg, hdrs, protocol):
+   def _handle_error(self, request, response, code, msg, hdrs):
       """
       Let auth errors (401, 407) propagate so auth handlers can retry
       """
       if code in (401, 407):
-         # Call parent to raise HTTPError exception
-         if protocol == 'http':
-            return super().http_error_default(request, response, code, msg, hdrs)
-         else:
-            return super().https_error_default(request, response, code, msg, hdrs)
+         raise urllib.error.HTTPError(request.full_url, code, msg, hdrs, response)
 
       # For other errors, return the response
       print(f'Notice! Got a {response.status}')
       return response
 
    def http_error_default(self, request, response, code, msg, hdrs):
-      return self._handle_error(request, response, code, msg, hdrs, 'http')
+      return self._handle_error(request, response, code, msg, hdrs)
 
    def https_error_default(self, request, response, code, msg, hdrs):
-      return self._handle_error(request, response, code, msg, hdrs, 'https')
+      return self._handle_error(request, response, code, msg, hdrs)
 
 class WebAccess:
    """
@@ -873,7 +869,13 @@ class VapixClient:
          req = self.w.get(url)
 
       if not (name := req.headers.get_filename()):
-         name = os.path.basename(urlparse(url).path) or "downloaded_file"
+         name = os.path.basename(urllib.parse.urlparse(url).path) or "downloaded_file"
+
+      # The filename may come from a device/MITM-controlled Content-Disposition
+      # header; strip any path components so it cannot escape `folder`.
+      name = os.path.basename(name)
+      if not name or name in ('.', '..'):
+         name = "downloaded_file"
 
       # Stream download
       with open(full_name := f'{folder}/{name}', 'wb') as f:
@@ -1642,7 +1644,7 @@ class VapixClient:
       Print out the edge recordings
       """
       table = []
-      url = f'/axis-cgi/record/list.cgi?recordingid={rec_id}{"&" if len(other_args) else ""}{other_args}'
+      url = f'/axis-cgi/record/list.cgi?recordingid={urllib.parse.quote(rec_id, safe="")}{"&" if len(other_args) else ""}{other_args}'
       envelope = self._simple_vapix_xml_response_call(url)
       for r in list(envelope.find('recordings')):
          recording = {}
@@ -1661,7 +1663,12 @@ class VapixClient:
 
       Download a recording from the device
       """
-      url = f'/axis-cgi/record/export/exportrecording.cgi?schemaversion=1&recordingid={rec_id}&diskid={disk_id}&exportformat=matroska'
+      url = (
+         '/axis-cgi/record/export/exportrecording.cgi?schemaversion=1'
+         f'&recordingid={urllib.parse.quote(rec_id, safe="")}'
+         f'&diskid={urllib.parse.quote(disk_id, safe="")}'
+         '&exportformat=matroska'
+      )
       return self._file_download(url, folder)
 
    #----------------------------------------------------------------------------
@@ -1820,6 +1827,9 @@ class MyUsecases(VapixClient):
 
       Pre: start with clean (empty) eventrule configuration
       """
+      # AddOrModifySchedules1() always passes 4 specs to AddOrReplaceSchedules(),
+      # which returns one result per spec; pylint can't infer that from the loop.
+      # pylint: disable-next=unbalanced-tuple-unpacking
       schedule_id1, schedule_id2, schedule_id3, schedule_id4 = self.AddOrModifySchedules1()
 
 
